@@ -11,7 +11,7 @@ Su Colab:
 Tutti i .png intermedi stanno in <REPO>/workspace/studio/<nome>/. Lo stato (paths,
 sorgente) vive in gr.State e si aggiorna a ogni run.
 """
-import os, sys, shutil
+import os, sys, shutil, subprocess
 from pathlib import Path
 
 REPO = os.environ.get("SEE_THROUGH_REPO", "/content/see-through")
@@ -19,7 +19,15 @@ for p in (REPO, os.path.join(REPO, "common"), os.path.join(REPO, "annotators")):
     if os.path.isdir(p) and p not in sys.path:
         sys.path.insert(0, p)
 
-import numpy as np
+def _ensure_pil():
+    # Pillow su Colab può essere in stato misto (ImageText presente ma PIL._typing senza _Ink).
+    # Verifica in un sottoprocesso separato per non inquinare il cache di questo processo.
+    probe = "import sys; from PIL import _typing; sys.exit(0 if getattr(_typing, '_Ink', None) is not None else 3)"
+    if subprocess.run([sys.executable, "-c", probe]).returncode != 0:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade",
+                        "--force-reinstall", "--no-cache-dir", "Pillow>=11.1.0"], check=False)
+
+_ensure_pil()
 from PIL import Image, ImageDraw
 import cv2
 import torch
