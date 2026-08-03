@@ -45,7 +45,7 @@ class ProgramConfig(Config):
     imgsave_ext: str = '.png'
     parsing_src: str= 'parsinglog_sambody_iter1_step18k_masks.json'
 
-    inference_provider: str = 'dummy'   # dummy | sam | cartoonseg
+    inference_provider: str = 'sam'    # dummy | sam | cartoonseg
     show_candidates_panel: bool = True  # pannello istanze candidato a destra
     assembly_min_iou: float = 0.15      # Fase 3: soglia IoU voting tag
     sam_model_size: str = 'small'       # tiny | small | base+ | large (CPU: small/tiny)

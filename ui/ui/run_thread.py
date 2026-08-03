@@ -23,6 +23,7 @@ class SegmentationThread(ThreadBase):
     page_finished = Signal(int)
     manual_inference_finished = Signal(object)  # list[Instance]
     progress = Signal(int)
+    status_msg = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent=parent)
@@ -48,12 +49,15 @@ class SegmentationThread(ThreadBase):
             self.manual_inference_finished.emit([])
             return
         try:
+            self.status_msg.emit(f'Caricamento modello \'{provider.name}\'…')
             provider.load_model()  # lazy: carica anche nei path box/point
+            self.status_msg.emit('Segmentazione in corso…')
             new_instances = provider.infer_img(img, boxes=boxes, points=points, labels=labels)
         except Exception as e:  # noqa: BLE001
             LOGGER.exception('Inferenza manuale fallita')
             self.manual_inference_finished.emit([])
-            raise e
+            self.early_stop_signal.emit(f'Errore di segmentazione: {e}')
+            return
         num_exists = len(proj.current_instance_list)
         for ii, ins in enumerate(new_instances):
             ins.idx = num_exists + ii
@@ -64,9 +68,16 @@ class SegmentationThread(ThreadBase):
     def _run_batch_seg(self, proj: ProjSeg, provider):
         if not provider.supports_batch():
             LOGGER.error('Provider non supporta batch: usare box/point.')
-            self.early_stop_signal.emit('Provider non supporta batch')
+            self.early_stop_signal.emit('Provider non supporta batch: usa Box (W) o Point (P)')
             return
-        provider.load_model()
+        try:
+            self.status_msg.emit(f'Caricamento modello \'{provider.name}\'… (la prima volta ~20 s)')
+            provider.load_model()
+        except Exception as e:  # noqa: BLE001
+            LOGGER.exception('Caricamento modello fallito')
+            self.early_stop_signal.emit(f'Modello non caricabile: {e}')
+            return
+        total = len(proj.pages)
         for page_index, imgname in enumerate(proj.pages):
             if self._stop_flag and page_index > 0:
                 self.early_stop_signal.emit('Batch interrotto dall\'utente')
@@ -81,6 +92,7 @@ class SegmentationThread(ThreadBase):
                 LOGGER.warning(f'final.* mancante in {page_dir}; skippo')
                 continue
             img = np.array(Image.open(str(final)).convert('RGB'))
+            self.status_msg.emit(f'Pagina {page_index + 1}/{total}: {imgname}…')
             try:
                 instances = provider.infer_img(img)
             except Exception as e:  # noqa: BLE001
@@ -95,3 +107,5 @@ class SegmentationThread(ThreadBase):
             self.progress.emit(int(round((page_index + 1) / max(1, proj.num_pages) * 100)))
         if not self._stop_flag:
             self.progress.emit(100)
+            self.status_msg.emit(
+                f'Batch completato ({total} pagine) — apri ogni pagina e usa \'Apply as parts\'')

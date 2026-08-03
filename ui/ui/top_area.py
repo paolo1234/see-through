@@ -158,6 +158,13 @@ class TopArea(Widget):
         self.box_tool_check.toggled.connect(self.on_prompt_tool)
         self.point_tool_check.toggled.connect(self.on_prompt_tool)
 
+        # feedback di stato: messaggi su run/segmentazione/candidati
+        self.status_label = QLabel(self.tr('Pronto — scegli Engine e premi Run, oppure W=Box / P=Point'), parent=self)
+        self.status_label.setObjectName('StatusLabel')
+        self.status_label.setWordWrap(False)
+        self.status_label.setFixedHeight(20)
+        self.status_label.setContentsMargins(6, 0, 6, 0)
+
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.show_colormsk_checkbox)
         model_layout.addLayout(mask_opacity_layout)
@@ -169,6 +176,7 @@ class TopArea(Widget):
         model_layout.addWidget(self.box_tool_check)
         model_layout.addWidget(self.point_tool_check)
         model_layout.addWidget(self.model_stack_widget)
+        model_layout.addWidget(self.status_label)
         model_layout.addStretch(-1)
         model_layout.addWidget(self.incomplete_checkbox)
         model_layout.addWidget(self.valid_checkbox)
@@ -182,12 +190,22 @@ class TopArea(Widget):
         layout.setContentsMargins(margin, 0, margin, 0)
         self.setMaximumHeight(64)
 
+    def set_status(self, msg: str):
+        self.status_label.setText(msg)
+        self.status_label.setToolTip(msg)
+
     # ---------- Fase 2: handler run/prompt ----------
     def on_provider_changed(self, name: str):
         if pcfg.inference_provider != name:
             pcfg.inference_provider = name
             save_config()
         self.sam_size_selector.setEnabled(name == 'sam')
+        if name == 'dummy':
+            self.set_status('Engine \'dummy\': candidati fittizi per provare il flusso — scegli SAM per la segmentazione reale.')
+        elif name == 'sam':
+            self.set_status('Engine SAM: premi Run per segmentare tutte le pagine, oppure W=Box / P=Point.')
+        else:
+            self.set_status(f'Engine \'{name}\': premi Run per iniziare.')
 
     def on_sam_size_changed(self, size: str):
         if pcfg.sam_model_size != size:

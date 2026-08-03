@@ -120,6 +120,7 @@ class MainWindow(FramelessWindow):
         self.canvas.end_create_rect.connect(self.on_end_create_rect)
         self.canvas.export_cutout.connect(self.export_cutout)
         self.run_thread.progress.connect(self.on_run_progress)
+        self.run_thread.status_msg.connect(self.on_run_status)
         self.candidates_list.itemDoubleClicked.connect(self.on_candidate_activate)
         self.apply_candidates_btn.clicked.connect(self.apply_candidates)
         self.merge_sel_btn.clicked.connect(self.on_merge_selected)
@@ -614,6 +615,13 @@ class MainWindow(FramelessWindow):
         LOGGER.debug(msg)
         self.bottomBar.progress_bar.updateProgress(0)
         self.bottomBar.progress_bar.hide()
+        self.topArea.set_running(False)
+        self.topArea.set_status(msg)
+        if 'interrotto' not in msg.lower():
+            create_info_dialog(msg)
+
+    def on_run_status(self, msg: str):
+        self.topArea.set_status(msg)
     
     def on_update_proj_progress(self, progress):
         if self.topArea.isVisible():
@@ -626,9 +634,12 @@ class MainWindow(FramelessWindow):
         instances = list(instances or [])
         if not instances:
             self.topArea.set_running(False)
+            self.topArea.set_status('Nessun candidato prodotto — prova con un box/point più grande.')
             return
         self.canvas.push_undo_command(AddInstancesCommand(self.proj, instances))
         self.refresh_candidates()
+        self.topArea.set_status(
+            f'+{len(instances)} candidato/i — selezionalo e premi \'Apply as parts\' per creare la parte.')
 
     # ---------- Fase 2: run batch / box / point ----------
     def on_run_progress(self, value: int):
@@ -636,6 +647,7 @@ class MainWindow(FramelessWindow):
         if value >= 100:
             self.bottomBar.progress_bar.hide()
             self.topArea.set_running(False)
+            self.topArea.set_status('Batch completato — apri ogni pagina e premi \'Apply as parts\'.')
 
     def on_run_requested(self, running: bool):
         if running:
@@ -646,11 +658,12 @@ class MainWindow(FramelessWindow):
             try:
                 provider = get_provider(pcfg.inference_provider,
                                         device=pcfg.segmentation_device)
-                provider.load_model()  # errore chiaro se backend/pesi mancano
             except Exception as e:  # noqa: BLE001
                 create_error_dialog(e, 'Backend di inferenza non disponibile')
                 self.topArea.set_running(False)
                 return
+            self.topArea.set_status(
+                f'Avvio segmentazione con \'{pcfg.inference_provider}\'…')
             self.run_thread.runSegmentation(self.proj, provider)
             self.topArea.set_running(True)
             self.bottomBar.progress_bar.show()
@@ -731,6 +744,9 @@ class MainWindow(FramelessWindow):
         else:
             self.proj.set_current_page_byidx(page_index)
             self.canvas.updateCanvas()
+        n_cand = len(self.proj.current_instance_list)
+        self.topArea.set_status(
+            f'Pagina {page_index + 1}/{self.proj.num_pages} segmentata — {n_cand} candidato/i.')
         if self.proj.num_pages > 0:
             if page_index + 1 == self.proj.num_pages:
                 self.bottomBar.progress_bar.hide()

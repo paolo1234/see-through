@@ -4,6 +4,14 @@ QWidget {
     background-color: @qwidgetBackgroundColor;
 }
 
+QLabel#StatusLabel {
+    background-color: @emptyContentBackgroundColor;
+    border: 1px solid @borderColor;
+    border-radius: 4px;
+    padding: 0px 6px;
+    color: @qwidgetForegroundColor;
+}
+
 SeparatorWidget {
     border-color: @borderColor;
 }
