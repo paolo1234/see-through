@@ -6,7 +6,8 @@ from .combobox import ComboBox, SmallComboBox, SmallSizeComboBox, SizeComboBox
 from .label import SmallParamLabel, ParamNameLabel, SizeControlLabel, SmallSizeControlLabel
 from .message import TaskProgressBar
 # from utils.torch_utils import AVAILABLE_DEVICES
-from .ui_config import SegModel, AVAILABLE_SEGMODELS, ProgramConfig
+from .ui_config import SegModel, AVAILABLE_SEGMODELS, ProgramConfig, pcfg, save_config
+from .inference_backend import AVAILABLE_PROVIDERS
 
 AVAILABLE_DEVICES = ['cpu', 'cuda']
 
@@ -98,6 +99,9 @@ class RunButton(QToolButton):
 class TopArea(Widget):
 
     tag_changed = Signal(str)
+    # Fase 2: run batch / tool di prompt
+    run_requested = Signal(bool)
+    prompt_tool = Signal(str)  # 'box' | 'point' | 'none'
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -130,17 +134,30 @@ class TopArea(Widget):
         # self.seg_params_widget = SegParamsWidget()
 
         self.model_stack_widget = QStackedWidget(parent=self)
-        # self.model_stack_widget.addWidget(self.seg_params_widget)
+        self.seg_params_widget = SegParamsWidget()
+        self.model_stack_widget.addWidget(self.seg_params_widget)
 
-        # self.run_btn = RunButton()
+        self.run_btn = RunButton()
+        self.run_btn.pressed.connect(self.on_run_pressed)
+
+        self.provider_selector, _, provider_lo = combobox_with_label(
+            self.tr('Engine'), options=AVAILABLE_PROVIDERS, size='small', editable=False)
+        self.provider_selector.currentTextChanged.connect(self.on_provider_changed)
+
+        self.box_tool_check = QCheckBox(self.tr('Box'), parent=self)
+        self.point_tool_check = QCheckBox(self.tr('Point'), parent=self)
+        self.box_tool_check.toggled.connect(self.on_prompt_tool)
+        self.point_tool_check.toggled.connect(self.on_prompt_tool)
 
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.show_colormsk_checkbox)
         model_layout.addLayout(mask_opacity_layout)
         model_layout.addWidget(self.show_contour_checkbox)
-
-        # model_layout.addWidget(self.run_btn)
+        model_layout.addWidget(self.run_btn)
         model_layout.addLayout(cls_list_combobox_lo)
+        model_layout.addLayout(provider_lo)
+        model_layout.addWidget(self.box_tool_check)
+        model_layout.addWidget(self.point_tool_check)
         model_layout.addWidget(self.model_stack_widget)
         model_layout.addStretch(-1)
         model_layout.addWidget(self.incomplete_checkbox)
@@ -153,16 +170,52 @@ class TopArea(Widget):
         # layout.addLayout(tool_layout)
         margin = layout.contentsMargins().left()
         layout.setContentsMargins(margin, 0, margin, 0)
-        self.setMaximumHeight(36)
+        self.setMaximumHeight(64)
+
+    # ---------- Fase 2: handler run/prompt ----------
+    def on_provider_changed(self, name: str):
+        if pcfg.inference_provider != name:
+            pcfg.inference_provider = name
+            save_config()
+
+    def on_run_pressed(self):
+        # RunButton ha gia' flippato self.run_btn.running
+        self.run_requested.emit(self.run_btn.running)
+
+    def on_prompt_tool(self):
+        box = self.box_tool_check.isChecked()
+        point = self.point_tool_check.isChecked()
+        self.point_tool_check.blockSignals(True)
+        self.box_tool_check.blockSignals(True)
+        if box:
+            self.point_tool_check.setChecked(False)
+        elif point:
+            self.box_tool_check.setChecked(False)
+        self.point_tool_check.blockSignals(False)
+        self.box_tool_check.blockSignals(False)
+        if point:
+            self.prompt_tool.emit('point')
+        elif box:
+            self.prompt_tool.emit('box')
+        else:
+            self.prompt_tool.emit('none')
+
+    def set_running(self, running: bool):
+        if running:
+            self.run_btn.setStopState()
+            self.run_btn.running = True
+        else:
+            self.run_btn.setRunState()
+            self.run_btn.running = False
 
     def setupConfig(self, config: ProgramConfig):
-        # segparams = self.seg_params_widget
-        # segparams.refine_checker.setChecked(config.segmentation_refine)
-        # segparams.device_selector.setCurrentText(config.segmentation_device)
-        # segparams.confidence_thr.setValue(config.segmentation_conf_thr)
-        # self.model_combobox.setCurrentText(config.segmentation_model)
-        # self.show_colormsk_checkbox.setChecked(config.show_colorcode)
-        pass
+        segparams = self.seg_params_widget
+        segparams.refine_checker.setChecked(config.segmentation_refine)
+        segparams.device_selector.setCurrentText(config.segmentation_device)
+        segparams.confidence_thr.setValue(config.segmentation_conf_thr)
+        self.provider_selector.blockSignals(True)
+        self.provider_selector.setCurrentText(config.inference_provider)
+        self.provider_selector.blockSignals(False)
 
     # def block_tag_change_signal(self, block: bool):
     #     self._block_tag_change_signal = block

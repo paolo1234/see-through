@@ -9,7 +9,7 @@ import os
 from PIL import Image
 import numpy as np
 from qtpy.QtWidgets import QFileDialog, QMessageBox, QListWidgetItem, QApplication, QListWidget, QMenu, QStackedWidget, QHBoxLayout, QSplitter, QVBoxLayout, QShortcut
-from qtpy.QtCore import Signal, QSize, Qt
+from qtpy.QtCore import Signal, QSize, Qt, QRectF
 from qtpy.QtGui import QGuiApplication, QContextMenuEvent, QIcon, QCloseEvent, QKeySequence
 import py7zr
 
@@ -23,10 +23,11 @@ from .tag_tree import TagTree, DrawablePreview
 from .io_thread import ProjSaveThread
 from .message import FrameLessMessageBox, MessageBox
 from .proj import ProjSeg
-from .commands import SetDrawableTagCommand, CommonCommand
+from .commands import SetDrawableTagCommand, CommonCommand, AddInstancesCommand
 from .top_area import TopArea
 from .widget import Widget
 from .run_thread import SegmentationThread
+from .inference_backend import get_provider
 from .ui_config import ProgramConfig, pcfg, save_config, EditMode, SegModel
 from . import shared
 from .logger import create_error_dialog, create_info_dialog
@@ -110,6 +111,14 @@ class MainWindow(FramelessWindow):
         self.topArea.mask_opacity_box.param_changed.connect(self.on_set_colormsk_opacity)
         self.topArea.valid_checkbox.checkStateChanged.connect(self.on_set_page_valid)
         self.topArea.incomplete_checkbox.checkStateChanged.connect(self.on_set_page_incomplete)
+
+        # Fase 2: inferenza interattiva (batch/box/point) + candidati
+        self.topArea.run_requested.connect(self.on_run_requested)
+        self.topArea.prompt_tool.connect(self.on_prompt_tool)
+        self.canvas.point_prompted.connect(self.on_point_prompted)
+        self.canvas.end_create_rect.connect(self.on_end_create_rect)
+        self.run_thread.progress.connect(self.on_run_progress)
+        self.candidates_list.itemDoubleClicked.connect(self.on_candidate_activate)
         
         # self.topArea.show_colormask.connect(self.on_show_colormask)
         self.titleBar.undo_trigger.connect(self.canvas.undo)
@@ -306,6 +315,44 @@ class MainWindow(FramelessWindow):
         self.canvas.setTagsVisible(tags, True)
         self.tagtree.setTagCheckstate(tags, True)
 
+    def on_candidates_menu(self, pos):
+        item = self.candidates_list.itemAt(pos)
+        if item is None:
+            return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu()
+        act_del = menu.addAction(self.tr('Delete candidate'))
+        act_export = menu.addAction(self.tr('Export cutout PNG'))
+        act = menu.exec_(self.candidates_list.mapToGlobal(pos))
+        if act == act_del:
+            self.on_candidate_delete(idx)
+        elif act == act_export:
+            self.export_candidate_cutout(idx)
+
+    def export_candidate_cutout(self, idx):
+        ins = None
+        for i in self.proj.current_instance_list:
+            if i.idx == idx:
+                ins = i
+                break
+        if ins is None:
+            return
+        d = self.proj.instance_dir()
+        savep = QFileDialog.getSaveFileName(self, self.tr('Save Cutout...'),
+                                            osp.join(d, f'candidate_{idx}.png'), 'PNG (*.png)')
+        if isinstance(savep, tuple):
+            savep = savep[0]
+        if not savep:
+            return
+        cutout = ins.get_cutout(self.proj.current_image)
+        if cutout is None:
+            create_info_dialog('Cutout non generabile (mask/immagine mancante).')
+            return
+        if not savep.lower().endswith('.png'):
+            savep += '.png'
+        Image.fromarray(cutout).save(savep)
+        create_info_dialog(f'Cutout salvato in {savep}')
+
     def on_reveal_drawable(self):
         sel_dids = self.tagtree.get_selected_drawable_ids()
         if len(sel_dids) > 0:
@@ -437,10 +484,104 @@ class MainWindow(FramelessWindow):
         if progress == 100:
             self.bottomBar.progress_bar.hide()
 
-    def manual_inference_finished(self, num_new_ins: int):
-        if num_new_ins == 0:
+    def manual_inference_finished(self, instances):
+        """Nuove istanze prodotte da un prompt box/point (undo-able)."""
+        instances = list(instances or [])
+        if not instances:
+            self.topArea.set_running(False)
             return
-        new_ins_list = self.proj.current_instance_list[-num_new_ins:]
+        self.canvas.push_undo_command(AddInstancesCommand(self.proj, instances))
+        self.refresh_candidates()
+
+    # ---------- Fase 2: run batch / box / point ----------
+    def on_run_progress(self, value: int):
+        self.bottomBar.progress_bar.updateProgress(value)
+        if value >= 100:
+            self.bottomBar.progress_bar.hide()
+            self.topArea.set_running(False)
+
+    def on_run_requested(self, running: bool):
+        if running:
+            if not self.proj.model_valid:
+                create_info_dialog('Apri prima un progetto con almeno una pagina.')
+                self.topArea.set_running(False)
+                return
+            try:
+                provider = get_provider(pcfg.inference_provider,
+                                        device=pcfg.segmentation_device)
+                provider.load_model()  # errore chiaro se backend/pesi mancano
+            except Exception as e:  # noqa: BLE001
+                create_error_dialog(e, 'Backend di inferenza non disponibile')
+                self.topArea.set_running(False)
+                return
+            self.run_thread.runSegmentation(self.proj, provider)
+            self.bottomBar.progress_bar.show()
+            self.bottomBar.progress_bar.updateProgress(0)
+        else:
+            self.run_thread.set_stop_flag()
+            self.topArea.set_running(False)
+
+    def on_prompt_tool(self, mode: str):
+        if mode == 'box':
+            pcfg.edit_mode = EditMode.RectInference
+            self.canvas.set_point_prompt_mode(False)
+        elif mode == 'point':
+            pcfg.edit_mode = EditMode.PointInference
+            self.canvas.set_point_prompt_mode(True)
+        else:
+            self.canvas.set_point_prompt_mode(False)
+            pcfg.edit_mode = EditMode.NONE
+
+    def on_point_prompted(self, points, labels):
+        if not self.proj.model_valid:
+            return
+        try:
+            provider = get_provider(pcfg.inference_provider,
+                                    device=pcfg.segmentation_device)
+        except Exception as e:  # noqa: BLE001
+            create_error_dialog(e, 'Provider non disponibile')
+            return
+        self.run_thread.runSegmentation(self.proj, provider,
+                                        points=points, labels=labels)
+
+    def on_end_create_rect(self, rect, idx):
+        if pcfg.edit_mode != EditMode.RectInference:
+            return
+        box = [int(rect.x()), int(rect.y()), int(rect.width()), int(rect.height())]
+        try:
+            provider = get_provider(pcfg.inference_provider,
+                                    device=pcfg.segmentation_device)
+        except Exception as e:  # noqa: BLE001
+            create_error_dialog(e, 'Provider non disponibile')
+            return
+        self.run_thread.runSegmentation(self.proj, provider, boxes=[box])
+
+    # ---------- Pannello candidati ----------
+    def refresh_candidates(self):
+        self.candidates_list.blockSignals(True)
+        self.candidates_list.clear()
+        for ins in self.proj.current_instance_list:
+            x, y, w, h = ins.bbox
+            it = QListWidgetItem(
+                f'#{ins.idx}  score {ins.score:.2f}  bbox [{x},{y} {w}x{h}]')
+            it.setData(Qt.ItemDataRole.UserRole, ins.idx)
+            self.candidates_list.addItem(it)
+        self.candidates_list.blockSignals(False)
+
+    def on_candidate_activate(self, item):
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        for ins in self.proj.current_instance_list:
+            if ins.idx == idx:
+                x, y, w, h = ins.bbox
+                self.canvas.ensureVisible(QRectF(x, y, w, h))
+                break
+
+    def on_candidate_delete(self, idx):
+        cur = self.proj.current_instance_list
+        self.proj._cur_instances = [i for i in cur if i.idx != idx]
+        self.proj.save_current_instances()
+        self.canvas.setProjSaveState(True)
+        self.refresh_candidates()
 
     def on_page_finished(self, page_index: int):
         if page_index != self.pageList.currentIndex().row():
@@ -500,13 +641,19 @@ class MainWindow(FramelessWindow):
         centerLayout.setSpacing(0)
 
         self.rightWidget = QSplitter(Qt.Orientation.Vertical)
+        self.candidates_list = QListWidget()
+        self.candidates_list.setMinimumHeight(120)
+        self.candidates_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.candidates_list.customContextMenuRequested.connect(self.on_candidates_menu)
         self.tagtree = TagTree(parent=self)
         self.drawable_preview = DrawablePreview(parent=self)
+        self.rightWidget.addWidget(self.candidates_list)
         self.rightWidget.addWidget(self.tagtree)
         self.rightWidget.addWidget(self.drawable_preview)
         
-        self.rightWidget.setStretchFactor(0, 7)
-        self.rightWidget.setStretchFactor(1, 1)
+        self.rightWidget.setStretchFactor(0, 2)
+        self.rightWidget.setStretchFactor(1, 7)
+        self.rightWidget.setStretchFactor(2, 1)
         # rightLayout = QVBoxLayout(self.rightWidget)
         # rightLayout.addWidget(self.tagtree)
         # rightLayout.adds
@@ -581,6 +728,18 @@ class MainWindow(FramelessWindow):
         shortcutD.activated.connect(self.shortcutNext)
         shortcutPageDown = QShortcut(QKeySequence(QKEY.Key_Right), self)
         shortcutPageDown.activated.connect(self.shortcutNext)
+
+        # Fase 2: tool box/point prompt
+        shortcutBox = QShortcut(QKeySequence("W"), self)
+        shortcutBox.activated.connect(self.shortcutBoxTool)
+        shortcutPoint = QShortcut(QKeySequence("P"), self)
+        shortcutPoint.activated.connect(self.shortcutPointTool)
+
+    def shortcutBoxTool(self):
+        self.topArea.box_tool_check.setChecked(not self.topArea.box_tool_check.isChecked())
+
+    def shortcutPointTool(self):
+        self.topArea.point_tool_check.setChecked(not self.topArea.point_tool_check.isChecked())
 
         # shortcutRectTool = QShortcut(QKeySequence("W"), self)
         # shortcutRectTool.activated.connect(self.shortcutRectTool)
@@ -691,6 +850,7 @@ class MainWindow(FramelessWindow):
             tag = self.drawable_preview.tag
             self.drawable_preview.updateTag(tag, tag_img=self.canvas.get_tagitem(tag).img, clear_preview_mask=True)
             self.titleBar.setTitleContent(page_name=self.proj.current_model)
+            self.refresh_candidates()
             # self.module_manager.handle_page_changed()
         self.page_changing = False
 

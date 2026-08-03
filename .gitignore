@@ -36,3 +36,9 @@ local_*
 # ── Symlink (user creates locally: ln -sf common/assets assets) ──
 /assets
 # end of file
+
+# ── Fase 2 / runtime ───────────────────────────────────────────
+.venv-st/
+ui/ui/config/config.json
+ui/ui/logs/
+ui/tmp/

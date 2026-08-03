@@ -25,6 +25,34 @@ class SetDrawableTagCommand(QUndoCommand):
 
 
 
+class AddInstancesCommand(QUndoCommand):
+    """Undo-able aggiunta di istanze candidato alla pagina corrente."""
+    def __init__(self, proj, instances, persist=True):
+        super().__init__()
+        self.proj = proj
+        self.instances = list(instances)
+        self.persist = persist
+        self.text()
+
+    def redo(self):
+        cur = self.proj.current_instance_list
+        ids = {i.idx for i in cur}
+        for ins in self.instances:
+            if ins.idx in ids:
+                ins.idx = max(ids, default=-1) + 1
+                ids.add(ins.idx)
+            cur.append(ins)
+        if self.persist:
+            self.proj.save_current_instances()
+
+    def undo(self):
+        cur = self.proj.current_instance_list
+        rm_ids = {i.idx for i in self.instances}
+        self.proj._cur_instances = [i for i in cur if i.idx not in rm_ids]
+        if self.persist:
+            self.proj.save_current_instances()
+
+
 class CommonCommand(QUndoCommand):
     def __init__(self, redo_kwargs, undo_kwargs, func: Callable):
         super().__init__()

@@ -220,7 +220,15 @@ def mask_from_paint(base, painted):
     b = base
     if b.shape[:2] != (h, w):
         b = cv2.resize(b, (w, h), interpolation=cv2.INTER_LINEAR)
-    diff = np.abs(painted - b.astype(np.float32)).max(axis=2)
+    # gr.Sketchpad returns (H, W, 4) RGBA where the drawing mask is in the
+    # alpha channel. If that channel is present and non-trivial, use it
+    # directly; otherwise fall back to an RGB-diff heuristic.
+    if painted.ndim == 3 and painted.shape[2] >= 4:
+        a = painted[..., 3]
+        if a.size > 0 and int(a.max()) - int(a.min()) > 0:
+            mask = (a > 32).astype(np.uint8) * 255
+            return mask, b
+    diff = np.abs(painted[..., :3] - b.astype(np.float32)).max(axis=2)
     return (diff > 32).astype(np.uint8) * 255, b
 
 def inpaint_run(state, tag, painted, save):
@@ -261,15 +269,12 @@ def inpaint_commit(state, tag, painted):
 # ---------------------------------------------------------------------------
 def refresh_parts(state):
     if not state:
-        return gr.update(choices=[], value=[])
+        return gr.update(choices=[], value=[]), gr.update(choices=[], value=None)
     pr = list_part_pngs(state["namedir"])
-    return gr.update(choices=pr, value=pr)
-
-def pick_order(state):
-    if not state:
-        return gr.update(choices=[], value=None)
-    pr = list_part_pngs(state["namedir"])
-    return gr.update(choices=pr, value=pr[0] if pr else None)
+    return (
+        gr.update(choices=pr, value=pr),
+        gr.update(choices=pr, value=pr[0] if pr else None),
+    )
 
 def auto_order(state, sel):
     if not state:
@@ -386,9 +391,10 @@ def build():
         with gr.Row():
             with gr.Column(scale=1):
                 inp_part = gr.Dropdown(label="Parte da inpaintare", choices=[], value=None)
-                inp_sketch = gr.Image(
+                inp_sketch = gr.Sketchpad(
                     label="1) scegli la parte (si carica) · 2) disegna la zona rossa · 3) inpaint",
-                    tool="sketch", type="numpy", height=360)
+                    brush=gr.Brush(colors=["#ff3b3b"], default_size=18, color_mode="fixed"),
+                    height=360)
                 inp_prev = gr.Button("Anteprima inpaint", variant="secondary")
                 inp_comm = gr.Button("Commit inpaint", variant="primary")
             with gr.Column(scale=2):
@@ -402,8 +408,7 @@ def build():
         comm_btn.click(fn=edit_commit, inputs=[st, part_tag, thr, erode, dilate, blur], outputs=part_view)
         regen_btn.click(fn=regen_part, inputs=[st, src, part_tag, repo_id, resolution, steps, seed, offload], outputs=part_view)
 
-        ref_btn.click(fn=refresh_parts, inputs=[st], outputs=sel)
-        order_sel.click(fn=pick_order, inputs=[st], outputs=order_sel)
+        ref_btn.click(fn=refresh_parts, inputs=[st], outputs=[sel, order_sel])
         up_btn.click(fn=move_up, inputs=[order_txt, order_sel], outputs=order_txt)
         down_btn.click(fn=move_down, inputs=[order_txt, order_sel], outputs=order_txt)
         auto_btn.click(fn=auto_order, inputs=[st, sel], outputs=order_txt)

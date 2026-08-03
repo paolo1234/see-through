@@ -4,7 +4,7 @@ import os.path as osp
 from typing import Tuple, Union, List, Dict
 
 from .logger import logger as LOGGER
-from utils.io_utils import find_all_imgs, load_image, NumpyEncoder, find_all_files_with_name
+from utils.io_utils import find_all_imgs, load_image, NumpyEncoder, find_all_files_with_name, get_last_modified_file
 from .structures import Instance, load_instance_list, save_instance_list
 from .misc import ImgnameNotInProjectException, ProjectLoadFailureException, ProjectDirNotExistException, ProjectNotSupportedException
 from .ui_config import pcfg
@@ -27,6 +27,10 @@ class ProjSeg:
         self.l2dmodel: Live2DScrapModel = None
         self.is_current_page_valid = True
         self.is_incomplete = False
+
+        self._cur_image = None
+        self._cur_instances = None
+        self._instance_path_cache = {}
 
 
     def idx2pagename(self, idx: int) -> str:
@@ -138,6 +142,10 @@ class ProjSeg:
             self.current_model = None
             del self.l2dmodel
             self.l2dmodel = None
+        # invalida cache immagine/istanze (paginata)
+        self._cur_image = None
+        self._cur_instances = None
+        self._instance_path_cache = {}
 
     def current_model_path(self):
         return osp.join(self.directory, self.current_model)
@@ -223,6 +231,74 @@ class ProjSeg:
     def model_valid(self):
         return self.l2dmodel is not None
     
+    # ------------------------------------------------------------------
+    # Fase 2 - storage pagina: immagine corrente + istanze candidato
+    # (per l'inferenza a box/point e il re-fine locale)
+    # ------------------------------------------------------------------
+
+    def get_instance_path(self, page: str) -> str:
+        if page not in self._instance_path_cache:
+            self._instance_path_cache[page] = osp.join(
+                self.directory, page, 'instances.json')
+        return self._instance_path_cache[page]
+
+    def instance_dir(self) -> str:
+        if self.current_model is None:
+            return self.directory
+        return osp.join(self.directory, self.current_model)
+
+    @property
+    def current_image(self) -> Union[np.ndarray, None]:
+        """Immagine RGB della pagina corrente (cache), caricata lazy.
+        La sorgente e' il file '<modello>/final.{jxl,png,webp}'."""
+        if self.current_model is None:
+            return None
+        if self._cur_image is None:
+            p = self.current_model_path()
+            if p is None or not osp.isdir(p):
+                return None
+            final = get_last_modified_file(osp.join(p, 'final'),
+                                           ['.jxl', '.png', '.webp'])
+            if final is None:
+                LOGGER.warning(f'final.* non trovato in {p}')
+                return None
+            img = load_image(str(final))
+            if img is not None and img.ndim == 2:
+                img = np.stack([img] * 3, axis=-1)
+            self._cur_image = img
+        return self._cur_image
+
+    # alias usato dal vecchio run_thread (img_array)
+    @property
+    def img_array(self) -> Union[np.ndarray, None]:
+        return self.current_image
+
+    @property
+    def current_instance_list(self) -> List[Instance]:
+        """Lista Instance (candidati) della pagina corrente, persistita."""
+        if self.current_model is None:
+            return []
+        if self._cur_instances is None:
+            p = self.get_instance_path(self.current_model)
+            if osp.exists(p):
+                try:
+                    self._cur_instances = load_instance_list(p)
+                except Exception as e:  # noqa: BLE001
+                    LOGGER.warning(f'Falito caricamento instances {p}: {e}')
+                    self._cur_instances = []
+            else:
+                self._cur_instances = []
+        return self._cur_instances
+
+    def save_current_instances(self):
+        """Persist l'istanze della pagina corrente in instances.json."""
+        if self.current_model is None:
+            return
+        os.makedirs(self.instance_dir(), exist_ok=True)
+        p = self.get_instance_path(self.current_model)
+        save_instance_list(self._cur_instances or [], p)
+        LOGGER.debug(f'salvati {len(self._cur_instances or [])} instances -> {p}')
+
     def get_did_tag_pairs(self, seg_type='body_part_tag'):
         dids, tag_list = [], []
         if self.model_valid:

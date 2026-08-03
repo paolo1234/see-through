@@ -112,6 +112,8 @@ class Canvas(QGraphicsScene):
     incanvas_selection_changed = Signal(list)
 
     drawable_selection_changed = Signal(str, bool)
+    # Fase 2: prompt point (SAM) raccolti sul canvas
+    point_prompted = Signal(object, object)  # (points, labels)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -148,6 +150,10 @@ class Canvas(QGraphicsScene):
         self.rubber_band = self.addWidget(QRubberBand(QRubberBand.Shape.Rectangle))
         self.rubber_band.hide()
         self.rubber_band_origin = None
+
+        # Fase 2: modo point-prompt
+        self.point_prompt_mode = False
+        self.point_prompt_points = []
 
         self.scaleFactorLabel = FadeLabel(self.gv)
         self.scaleFactorLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -471,6 +477,26 @@ class Canvas(QGraphicsScene):
     def no_instance_selected(self):
         return len(self.selected_drawable_items()) == 0
 
+    def set_point_prompt_mode(self, on: bool):
+        """Attiva/disattiva la cattura di punti per SAM (EditMode.PointInference)."""
+        self.point_prompt_mode = bool(on)
+        self.point_prompt_points = []
+        self.gv.setCursor(Qt.CursorShape.CrossCursor if on else Qt.CursorShape.ArrowCursor)
+        if on:
+            pcfg.edit_mode = EditMode.PointInference
+        elif pcfg.edit_mode == EditMode.PointInference:
+            pcfg.edit_mode = EditMode.NONE
+
+    def get_inference_rect(self):
+        """bbox [x,y,w,h] in pixel immagine; None se non valido/modo spento."""
+        if pcfg.edit_mode != EditMode.RectInference:
+            return None
+        if not self.creating_rect and self.rect_tool.isVisible():
+            r = self.rect_tool.rect()
+            if r is not None and r.width() >= 2 and r.height() >= 2:
+                return [int(r.x()), int(r.y()), int(r.width()), int(r.height())]
+        return None
+
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         btn = event.button()
         left_btn_pressed = btn == Qt.MouseButton.LeftButton
@@ -478,6 +504,15 @@ class Canvas(QGraphicsScene):
         if btn == Qt.MouseButton.MiddleButton:
             self.mid_btn_pressed = True
             self.pan_initial_pos = event.screenPos()
+            return
+
+        # Fase 2: cattura punto prompt (click sinistro in point-mode)
+        if self.point_prompt_mode and left_btn_pressed and self.proj.model_valid:
+            p = event.scenePos() / self.scale_factor
+            pt = [int(p.x()), int(p.y())]
+            self.point_prompt_points.append(pt)
+            pts = list(self.point_prompt_points)
+            self.point_prompted.emit(pts, [1] * len(pts))
             return
         
         if self.proj.model_valid:
@@ -522,6 +557,10 @@ class Canvas(QGraphicsScene):
             self.mid_btn_pressed = False
         if self.creating_rect:
             self.endCreateInferenceRect()
+            if pcfg.edit_mode == EditMode.RectInference:
+                r = self.rect_tool.rect()
+                if r is not None and r.width() >= 2 and r.height() >= 2:
+                    self.end_create_rect.emit(r, 0)
         elif btn == Qt.MouseButton.RightButton:
             if not self.creating_rect and  not rb_valid:
                 self.context_menu_requested.emit(event.screenPos())
