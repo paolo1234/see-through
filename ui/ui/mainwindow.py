@@ -1040,6 +1040,8 @@ class MainWindow(FramelessWindow):
     
     def on_darkmode_triggered(self):
         pcfg.darkmode = self.titleBar.darkModeAction.isChecked()
+        from ui.ui.misc import apply_theme_palette
+        apply_theme_palette(self.app, dark=pcfg.darkmode)
         self.resetStyleSheet(reverse_icon=True)
         save_config()
 

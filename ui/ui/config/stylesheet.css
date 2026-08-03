@@ -75,12 +75,14 @@ QComboBox {
     padding-left: 8px;
     border: 1px solid @borderColor;
     background-color: @transtexteditBackgroundColor;
+    color: @qwidgetForegroundColor;
 }
 
 QLineEdit {
     border: 1px solid @borderColor;
     background-color: @transtexteditBackgroundColor;
     height: 27px;
+    color: @qwidgetForegroundColor;
 }
 
 QPlainTextEdit {
@@ -243,6 +245,11 @@ QListWidget {
     border-color: @borderColor;
     border-style: solid;
     border-width: 1px;
+    color: @qwidgetForegroundColor;
+}
+
+QListWidget::item {
+    color: @qwidgetForegroundColor;
 }
 
 QAction {
@@ -252,6 +259,7 @@ QAction {
 QMenu {
     background-color: @emptyContentBackgroundColor;
     margin: 0px; /* some spacing around the menu */
+    color: @qwidgetForegroundColor;
 }
 
 QMenu::item {
@@ -260,6 +268,7 @@ QMenu::item {
     margin: 0px;
     background-color: @emptyContentBackgroundColor;
     padding-left: 20px;
+    color: @qwidgetForegroundColor;
     padding-right: 20px;
 }
 
@@ -299,12 +308,14 @@ QPushButton {
     background-color: @pushBtnBackgroundColor;
     border: 1px solid @borderColor;
     border-radius: 4px;
+    color: @qwidgetForegroundColor;
 }
 
 QToolButton {
     /* max-width: 94px; */
     border: 1px solid @borderColor;
     border-radius: 4px;
+    color: @qwidgetForegroundColor;
 }
 
 NoBorderPushBtn {

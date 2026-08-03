@@ -253,5 +253,49 @@ def mutate_dict_key(adict: dict, old_key: Union[str, int], new_key: str):
 def isDarkTheme():
     return pcfg.darkmode
 
+
+def apply_theme_palette(app, dark: bool = True):
+    """Imposta la palette Qt coerente con eva-dark/eva-light.
+
+    Senza palette esplicita Qt usa quella di sistema (testo nero anche in
+    tema scuro) per i widget il cui colore non e' coperto dal QSS
+    (QComboBox, QCheckBox, QSpinBox, menù, ...) -> scritte illeggibili.
+    """
+    from qtpy.QtGui import QColor, QPalette
+    if dark:
+        window = QColor('#282c34')
+        base = QColor('#21252b')
+        text = QColor('#8e99b1')
+        btn = QColor('#21252b')
+        btntext = QColor('#8e99b1')
+        disabled = QColor('#5a6270')
+    else:
+        window = QColor('#ebeef5')
+        base = QColor('#e1e4eb')
+        text = QColor('#5d5d5f')
+        btn = QColor('#c6c9cf')
+        btntext = QColor('#5d5d5f')
+        disabled = QColor('#9aa0ab')
+    highlight = QColor('#1e93e5')
+    highlighted = QColor('#ffffff')
+    p = QPalette()
+    p.setColor(QPalette.ColorRole.Window, window)
+    p.setColor(QPalette.ColorRole.WindowText, text)
+    p.setColor(QPalette.ColorRole.Base, base)
+    p.setColor(QPalette.ColorRole.AlternateBase, base.lighter(108))
+    p.setColor(QPalette.ColorRole.Text, text)
+    p.setColor(QPalette.ColorRole.Button, btn)
+    p.setColor(QPalette.ColorRole.ButtonText, btntext)
+    p.setColor(QPalette.ColorRole.Highlight, highlight)
+    p.setColor(QPalette.ColorRole.HighlightedText, highlighted)
+    p.setColor(QPalette.ColorRole.ToolTipBase, base)
+    p.setColor(QPalette.ColorRole.ToolTipText, text)
+    p.setColor(QPalette.ColorRole.PlaceholderText, disabled)
+    for grp in (QPalette.ColorGroup.Disabled,):
+        p.setColor(grp, QPalette.ColorRole.Text, disabled)
+        p.setColor(grp, QPalette.ColorRole.WindowText, disabled)
+        p.setColor(grp, QPalette.ColorRole.ButtonText, disabled)
+    app.setPalette(p)
+
 def themeColor():
     return QColor(30, 147, 229, 127)
