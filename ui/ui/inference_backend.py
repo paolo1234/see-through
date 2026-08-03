@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from typing import List, Optional, Tuple
 
+from .logger import logger as LOGGER
 from .structures import Instance
 
 
@@ -87,6 +88,7 @@ class SAMProvider(InferenceProvider):
         'large': 'sam2.1_hiera_large',
     }
 
+    def supports_batch(self): return True
     def supports_box(self):   return True
     def supports_point(self): return True
 
@@ -99,15 +101,29 @@ class SAMProvider(InferenceProvider):
         if device == 'cuda' and not torch.cuda.is_available():
             device = 'cpu'
         sam.build_model(self.weight_id, device=device)
+        # generazione automatica leggera per CPU: niente multi-crop,
+        # griglia 16x16, soglie basse, maschere <150px scartate
+        from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+        sam.mask_generator = SAM2AutomaticMaskGenerator(
+            model=sam.model,
+            points_per_side=16,
+            pred_iou_thresh=0.6,
+            stability_score_thresh=0.7,
+            min_mask_region_area=150,
+            crop_n_layers=0,
+        )
         return sam
 
     def infer_img(self, img, boxes=None, points=None, labels=None):
         if points is not None and len(points):
             pred_masks, scores, _ = self._model.predict(
                 img, points=points, labels=labels)
-        else:
+        elif boxes is not None and len(boxes):
             pred_masks, scores, _ = self._model.predict(
-                img, np.array(boxes if boxes is not None else []))
+                img, np.array(boxes))
+        else:
+            # batch automatico: segmenta tutto senza prompt
+            return self._auto_segment(img)
         instances = []
         for m, s in zip(pred_masks, scores):
             m = np.array(m, dtype=bool)
@@ -122,6 +138,47 @@ class SAMProvider(InferenceProvider):
             instances.append(Instance(mask=m.astype(np.uint8),
                                       bbox=[x, y, w, h],
                                       score=float(s), idx=len(instances)))
+        return instances
+
+    def _auto_segment(self, img):
+        """Segmentazione automatica (nessun prompt): candidate maschere su tutta
+        l'immagine. Su immagini grandi riduce il lato lungo a 1024px (la
+        generazione automatica costa O(pixel^2)) e riporta le maschere a
+        risoluzione originale."""
+        from PIL import Image as PILImage
+        h, w = img.shape[:2]
+        scale = 1.0
+        img_in = img
+        max_side = 1024
+        if max(h, w) > max_side:
+            scale = max_side / max(h, w)
+            new_w, new_h = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+            img_in = np.array(PILImage.fromarray(img).resize((new_w, new_h)))
+        try:
+            raw = self._model.generate(img_in)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception('Generazione automatica fallita; fallback a maschera piena')
+            raw = []
+        instances = []
+        for r in raw:
+            seg = np.asarray(r['segmentation'], dtype=bool)
+            if int(r.get('area', 0)) < 100:
+                continue
+            if scale != 1.0:
+                seg = np.asarray(
+                    PILImage.fromarray(seg).resize((w, h), PILImage.Resampling.NEAREST),
+                    dtype=bool)
+            ys, xs = np.where(seg)
+            if not ys.size:
+                continue
+            x, y = int(xs.min()), int(ys.min())
+            bw = int(xs.max()) - x + 1
+            bh = int(ys.max()) - y + 1
+            m = seg[y:y + bh, x:x + bw]
+            instances.append(Instance(mask=m.astype(np.uint8),
+                                      bbox=[x, y, bw, bh],
+                                      score=float(r.get('predicted_iou', 0.5)),
+                                      idx=len(instances)))
         return instances
 
 
