@@ -102,6 +102,7 @@ class RunButton(QToolButton):
 class TopArea(Widget):
 
     anim_requested = Signal()
+    settings_requested = Signal()
 
     tag_changed = Signal(str)
     # Fase 2: run batch / tool di prompt
@@ -149,6 +150,11 @@ class TopArea(Widget):
         self.anim_btn.setToolTip(self.tr('Cycle animation: genera idle/walk/run dalle parti e esporta atlas'))
         self.anim_btn.clicked.connect(self.on_anim_requested)
 
+        self.settings_btn = QPushButton(self.tr('⚙'))
+        self.settings_btn.setFixedWidth(30)
+        self.settings_btn.setToolTip(self.tr('Impostazioni: provider, modello SAM, parametri batch, risoluzione'))
+        self.settings_btn.clicked.connect(self.on_settings_requested)
+
         self.provider_selector, _, provider_lo = combobox_with_label(
             self.tr('Engine'), options=AVAILABLE_PROVIDERS, size='small', editable=False)
         self.provider_selector.currentTextChanged.connect(self.on_provider_changed)
@@ -177,6 +183,7 @@ class TopArea(Widget):
         model_layout.addWidget(self.show_contour_checkbox)
         model_layout.addWidget(self.run_btn)
         model_layout.addWidget(self.anim_btn)
+        model_layout.addWidget(self.settings_btn)
         model_layout.addLayout(cls_list_combobox_lo)
         model_layout.addLayout(provider_lo)
         model_layout.addLayout(samsize_lo)
@@ -204,6 +211,9 @@ class TopArea(Widget):
     # ---------- cycle animation ----------
     def on_anim_requested(self):
         self.anim_requested.emit()
+
+    def on_settings_requested(self):
+        self.settings_requested.emit()
 
     # ---------- Fase 2: handler run/prompt ----------
     def on_provider_changed(self, name: str):

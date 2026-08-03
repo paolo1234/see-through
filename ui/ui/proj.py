@@ -167,7 +167,7 @@ class ProjSeg:
         from .assembly import make_drawable
         existing = {d.did for d in self.l2dmodel.drawables}
         for ins in self.current_instance_list:
-            if not ins.applied or not ins.tag:
+            if not ins.applied or not ins.tag or not ins.visible:
                 continue
             did = f'inst://{self.current_model}/{ins.idx}'
             if did in existing:
@@ -178,6 +178,7 @@ class ProjSeg:
             d.draw_order = len(self.l2dmodel.drawables)
             d.idx = d.draw_order
             self.l2dmodel.drawables.append(d)
+            self.l2dmodel.did2drawable[d.did] = d
 
     def _applied_did(self, ins):
         return f'inst://{self.current_model}/{ins.idx}'
@@ -189,7 +190,8 @@ class ProjSeg:
         did = self._applied_did(ins)
         self.l2dmodel.drawables = [
             d for d in self.l2dmodel.drawables if d.did != did]
-        if ins.applied:
+        self.l2dmodel.did2drawable.pop(did, None)
+        if ins.applied and ins.visible:
             self.rebuild_applied_drawable(ins)
 
     def rebuild_applied_drawable(self, ins):
@@ -206,6 +208,73 @@ class ProjSeg:
         d.draw_order = len(self.l2dmodel.drawables)
         d.idx = d.draw_order
         self.l2dmodel.drawables.append(d)
+        self.l2dmodel.did2drawable[d.did] = d
+
+    def next_free_idx(self) -> int:
+        """Prossimo indice istanza libero per la pagina corrente."""
+        lst = self.current_instance_list
+        return (max((i.idx for i in lst), default=-1)) + 1
+
+    def delete_instances(self, instances: List):
+        """Elimina le istanze (candidate/applicate) dalla pagina corrente."""
+        dids = {f'inst://{self.current_model}/{i.idx}' for i in instances}
+        self.current_instance_list[:] = [
+            i for i in self.current_instance_list if i not in instances]
+        self.l2dmodel.drawables = [
+            d for d in self.l2dmodel.drawables if d.did not in dids]
+        for did in dids:
+            self.l2dmodel.did2drawable.pop(did, None)
+        self.save_current_instances()
+
+    def duplicate_instances(self, instances: List) -> List:
+        """Duplica le istanze (come parti applicate). Ritorna le nuove."""
+        new_ones = []
+        for ins in instances:
+            import copy
+            cp = copy.deepcopy(ins)
+            cp.idx = self.next_free_idx()
+            cp.applied = True
+            cp.visible = True
+            cp.name = (ins.name or f'inst://{self.current_model}/{ins.idx}') + ' (copia)'
+            self.current_instance_list.append(cp)
+            new_ones.append(cp)
+            self.rebuild_applied_drawable(cp)
+        self.save_current_instances()
+        return new_ones
+
+    def move_instance(self, ins, dx: float, dy: float):
+        """Sposta un'istanza applicata di (dx, dy) pixel immagine.
+        La mask e' crop-locale: basta traslare il bbox."""
+        x, y, w, h = ins.bbox
+        ins.bbox = (int(x + dx), int(y + dy), int(w), int(h))
+        self.invalidate_applied_drawable(ins)
+        self.save_current_instances()
+
+    def set_instances_visible(self, instances: List, visible: bool):
+        """Mostra/nasconde i layer (senza eliminarli)."""
+        for ins in instances:
+            ins.visible = bool(visible)
+            if ins.applied:
+                self.invalidate_applied_drawable(ins)
+        self.save_current_instances()
+
+    def rename_instance(self, ins, name: str):
+        ins.name = name or None
+        self.save_current_instances()
+
+    def reorder_instance(self, ins, delta: int):
+        """Sposta il layer su/giu nella lista (ordine di disegno)."""
+        lst = self.current_instance_list
+        i = next((k for k, v in enumerate(lst) if v is ins), -1)
+        j = i + delta
+        if i < 0 or j < 0 or j >= len(lst):
+            return False
+        lst[i], lst[j] = lst[j], lst[i]
+        # ricostruisce i drawable in ordine (z-order)
+        self.l2dmodel.drawables = [d for d in self.l2dmodel.drawables if not (d.did and d.did.startswith('inst://'))]
+        self.rebuild_applied_drawables()
+        self.save_current_instances()
+        return True
 
     def current_model_path(self):
         return osp.join(self.directory, self.current_model)

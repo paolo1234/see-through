@@ -91,6 +91,8 @@ class Instance:
         self.idx = idx
         self.tag = 'unknown'   # Fase 3: tag votato/assegnato
         self.applied = False   # Fase 3: istanza promossa a drawable
+        self.visible = True    # Fase 8: visibilita' del layer (persistita)
+        self.name = None       # Fase 8: nome custom del layer (persistito)
         self._contours = None
 
     def get_cutout(self, src_img: np.ndarray):
@@ -157,7 +159,8 @@ def save_instance_list(instance_list: List[Instance], savep: str, compress=None)
         dmp_instance_list.append(
             {'mask_rle': mask_rle, 'score': instance.score, 'bbox': instance.bbox,
              'idx': instance.idx, 'tag': instance.tag,
-             'applied': instance.applied}
+             'applied': instance.applied,
+             'visible': instance.visible, 'name': instance.name}
         )
     dict2json(dmp_instance_list, savep, compress=compress)
 
@@ -173,5 +176,7 @@ def load_instance_list(p: str) -> List[Instance]:
         )
         instance.tag = ins.get('tag', 'unknown')
         instance.applied = ins.get('applied', False)
+        instance.visible = ins.get('visible', True)
+        instance.name = ins.get('name')
         instance_list.append(instance)
     return instance_list

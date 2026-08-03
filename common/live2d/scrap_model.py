@@ -1204,6 +1204,10 @@ class Live2DScrapModel:
         fd = json2dict(src)
         for d, v in fd['drawable'].items():
             d = d.lstrip('/')
+            if d not in self.did2drawable:
+                # drawable non presente (parti non ancora applicate/caricate):
+                # i tag verranno ripristinati da instances.json all'apply
+                continue
             self.did2drawable[d].face_part_id = v
         self._face_parsing = fd
         return True
@@ -1228,6 +1232,10 @@ class Live2DScrapModel:
             if v in _tag_cvt:
                 v = _tag_cvt[v]
             d = d.lstrip('/')
+            if d not in self.did2drawable:
+                # drawable non presente (parti non ancora applicate/caricate):
+                # i tag verranno ripristinati da instances.json all'apply
+                continue
             self.did2drawable[d].body_part_tag = v
         self._body_parsing = fd
         self._body_parsing_src = src

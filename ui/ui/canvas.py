@@ -739,6 +739,31 @@ class Canvas(QGraphicsScene):
             self.did2drawableitem[item.drawable.did] = item
         self.refresh_candidate_overlay()
 
+    def on_drawable_moved(self, item, dx, dy):
+        """Drag di un drawable: sposta l'istanza (undoable)."""
+        if self.proj is None or not self.proj.model_valid or item is None:
+            return
+        if not isinstance(item, DrawableItem):
+            return
+        ins = self._instance_from_did(item.drawable.did)
+        if ins is None:
+            return
+        from .commands import MoveInstanceCommand
+        self.push_undo_command(MoveInstanceCommand(
+            self.proj, ins, dx, dy, refresh_cb=self.refreshDrawableItems))
+
+    def _instance_from_did(self, did):
+        if not did or not did.startswith('inst://'):
+            return None
+        try:
+            idx = int(did.rsplit('/', 1)[1])
+        except (ValueError, IndexError):
+            return None
+        for i in self.proj.current_instance_list:
+            if i.idx == idx:
+                return i
+        return None
+
     def set_candidates_overlay(self, show: bool):
         """Mostra/nasconde l'overlay dei candidati non applicati."""
         self.show_cand_overlay = bool(show)

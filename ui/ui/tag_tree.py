@@ -143,18 +143,28 @@ def get_rstitem_renderhtml(text: str, span: Tuple[int, int], font: QFont = None)
         return ''
 
 class DrawableElements(QStandardItem):
-    def __init__(self, did: str, tag: str):
+    def __init__(self, did: str, tag: str, visible: bool = True, name: str = None):
         super().__init__()
         self.did = did
         self.tag = tag
-        self.setText(did)
+        self.visible = visible
+        self.name = name
+        self.setText(name if name else did)
         font = self.font()
         font.setPointSizeF(TREECHR_FONTSIZE)
         self.setFont(font)
         self.setEditable(False)
-        self.setCheckable(False)
-        # self.setCheckState(Qt.CheckState.Checked)
+        self.setCheckable(True)
+        self.setCheckState(Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
         self.setSelectable(True)
+
+    def set_visible_state(self, visible: bool):
+        self.visible = visible
+        self.setCheckState(Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
+
+    def set_display_name(self, name: str):
+        self.name = name
+        self.setText(name if name else self.did)
 
 
 class TagItem(QStandardItem):
@@ -198,6 +208,14 @@ class TagTree(QTreeView):
     reveal_drawable = Signal()
     set_selection_tag = Signal(str)
 
+    # Fase 8: operazioni sui livelli
+    delete_drawables = Signal()
+    duplicate_drawables = Signal()
+    rename_drawable = Signal()
+    move_drawable_up = Signal()
+    move_drawable_down = Signal()
+    drawable_visibility_changed = Signal(str, bool)
+
     hide_tags = Signal(str)
     show_tags = Signal(str)
     hide_non_selected = Signal()
@@ -228,6 +246,16 @@ class TagTree(QTreeView):
         self.show_all_tags_shortcut.activated.connect(self.show_all_tags)
         self.show_all_tag_action = QAction(self.tr('Show all Tags'), shortcut=Qt.Key.Key_4)
 
+        # Fase 8: operazioni layer da tastiera
+        self.del_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self.del_shortcut.activated.connect(self.delete_drawables.emit)
+        self.dup_shortcut = QShortcut(QKeySequence('Ctrl+D'), self)
+        self.dup_shortcut.activated.connect(self.duplicate_drawables.emit)
+        self.ren_shortcut = QShortcut(QKeySequence('F2'), self)
+        self.ren_shortcut.activated.connect(self.rename_drawable.emit)
+        self.show_shortcut = QShortcut(QKeySequence('H'), self)
+        self.show_shortcut.activated.connect(lambda: self.set_drawables_visible(True))
+
         sm = SearchResultModel()
         self.sm = sm
         self.setItemDelegate(HTMLDelegate())
@@ -252,6 +280,8 @@ class TagTree(QTreeView):
     #     pass
 
     def handle_item_data_changed(self, top_left_index, bottom_right_index, roles):
+        if self._block_selection_signal:
+            return
         if Qt.CheckStateRole in roles:
             # Iterate through the changed items if multiple items changed
             for row in range(top_left_index.row(), bottom_right_index.row() + 1):
@@ -259,7 +289,11 @@ class TagTree(QTreeView):
                     item = self.sm.item(row, column)
                     if item and item.isCheckable():
                         current_state = item.checkState()
-                        if current_state == Qt.Checked:
+                        checked = current_state == Qt.Checked
+                        if isinstance(item, DrawableElements):
+                            item.visible = checked
+                            self.drawable_visibility_changed.emit(item.did, checked)
+                        elif checked:
                             self.show_tags.emit(item.tag)
                         else:
                             self.hide_tags.emit(item.tag)
@@ -270,7 +304,8 @@ class TagTree(QTreeView):
             self.addPage(tag)
         self.addPage('None')
     
-    def update_drawable_lst(self, drawable_id_lst, drawable_tag_lst):
+    def update_drawable_lst(self, drawable_id_lst, drawable_tag_lst,
+                            drawable_visible_lst=None, drawable_name_lst=None):
         self._block_selection_signal = True
         tag2ids = {}
         for tag, page in self.tag2page.items():
@@ -278,15 +313,18 @@ class TagTree(QTreeView):
                 page.removeRows(0, page.rowCount())
             tag2ids[tag] = []
 
-        for did, tag in zip(drawable_id_lst, drawable_tag_lst):
+        visible_lst = drawable_visible_lst or [True] * len(drawable_id_lst)
+        name_lst = drawable_name_lst or [None] * len(drawable_id_lst)
+
+        for did, tag, vis, name in zip(drawable_id_lst, drawable_tag_lst, visible_lst, name_lst):
             if tag not in self.tag2page:
                 tag = 'None'
-            tag2ids[tag].append(did)
-        
+            tag2ids[tag].append((did, vis, name))
+
         for tag, dids in tag2ids.items():
             page = self.tag2page[tag]
-            for did in dids:
-                elem = DrawableElements(did, tag)
+            for did, vis, name in dids:
+                elem = DrawableElements(did, tag, visible=vis, name=name)
                 page.appendRow(elem)
                 self.did2elem[did] = elem
 
@@ -415,6 +453,27 @@ class TagTree(QTreeView):
         menu.addMenu(set_tag_menu)
         menu.addSeparator()
 
+        has_selection = len(self.get_selected_drawable_ids()) > 0
+        act_delete = QAction(self.tr('Elimina layer (Canc)'), menu)
+        act_duplicate = QAction(self.tr('Duplica layer (Ctrl+D)'), menu)
+        act_rename = QAction(self.tr('Rinomina layer (F2)'), menu)
+        act_up = QAction(self.tr('Porta su (ordine disegno)'), menu)
+        act_down = QAction(self.tr('Porta giù (ordine disegno)'), menu)
+        act_show = QAction(self.tr('Mostra selezionati (H)'), menu)
+        act_hide = QAction(self.tr('Nascondi selezionati'), menu)
+        for a in (act_delete, act_duplicate, act_rename, act_up, act_down, act_show, act_hide):
+            a.setEnabled(has_selection)
+        menu.addAction(act_delete)
+        menu.addAction(act_duplicate)
+        menu.addAction(act_rename)
+        menu.addSeparator()
+        menu.addAction(act_up)
+        menu.addAction(act_down)
+        menu.addSeparator()
+        menu.addAction(act_show)
+        menu.addAction(act_hide)
+        menu.addSeparator()
+
         hide_tags = menu.addAction(self.hide_tag_action)
         show_tags = menu.addAction(self.show_tag_action)
         hide_non_selected = menu.addAction(self.hide_non_sel_tag_action)
@@ -442,6 +501,20 @@ class TagTree(QTreeView):
             self.propagate_page.emit()
         elif rst == search_act:
             self.search_page.emit()
+        elif rst == act_delete:
+            self.delete_drawables.emit()
+        elif rst == act_duplicate:
+            self.duplicate_drawables.emit()
+        elif rst == act_rename:
+            self.rename_drawable.emit()
+        elif rst == act_up:
+            self.move_drawable_up.emit()
+        elif rst == act_down:
+            self.move_drawable_down.emit()
+        elif rst == act_show:
+            self.set_drawables_visible(True)
+        elif rst == act_hide:
+            self.set_drawables_visible(False)
         elif rst in tag_actions:
             tag = tg_lst[tag_actions.index(rst)]
             self.set_selection_tag.emit(tag)
@@ -456,6 +529,11 @@ class TagTree(QTreeView):
                 continue
             dids.append(elem.did)
         return dids
+
+    def set_drawables_visible(self, visible: bool):
+        """Mostra/nascondi i drawable selezionati (emette il segnale per comando)."""
+        for did in self.get_selected_drawable_ids():
+            self.drawable_visibility_changed.emit(did, visible)
 
     def get_selected_tags(self, get_non_selected=False):
         sel_ids = self.selectionModel().selectedIndexes()

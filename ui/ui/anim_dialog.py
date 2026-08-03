@@ -44,10 +44,13 @@ class AnimationDialog(QDialog):
         self._playing = False
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._next_frame)
+        self._last_params = {}  # parametri effettivi per stato (usati dall'export)
         self.setWindowTitle('Cycle Animation (idle / walk / run)')
         self.setMinimumSize(560, 620)
         self._build_ui()
+        self.state_combo.blockSignals(True)
         self.state_combo.setCurrentText('walk')  # stato iniziale: walk
+        self.state_combo.blockSignals(False)
         self._generate()
 
     # ---------------- UI ----------------
@@ -112,6 +115,13 @@ class AnimationDialog(QDialog):
         self.bob_spin.valueChanged.connect(self._on_param_changed)
         grid.addWidget(QLabel('Bob (px):', self), r, 2)
         grid.addWidget(self.bob_spin, r, 3)
+
+        r += 1
+        self.res_combo = QComboBox(self)
+        self.res_combo.addItems(['100%', '75%', '50%', '25%'])
+        self.res_combo.setToolTip('Risoluzione di esportazione (default: nativa)')
+        grid.addWidget(QLabel('Risoluzione:', self), r, 0)
+        grid.addWidget(self.res_combo, r, 1)
 
         r += 1
         self.lean_spin = QDoubleSpinBox(self)
@@ -199,21 +209,28 @@ class AnimationDialog(QDialog):
 
     def _apply_defaults(self, kind):
         p = CycleParams.defaults(kind)
-        self.duration_spin.setValue(p.duration_s)
-        self.frames_spin.setValue(p.frames)
-        self.leg_spin.setValue(p.leg_swing)
-        self.arm_spin.setValue(p.arm_swing)
-        self.bob_spin.setValue(p.bob)
-        self.lean_spin.setValue(p.lean)
+        self._busy = True
+        try:
+            self.duration_spin.setValue(p.duration_s)
+            self.frames_spin.setValue(p.frames)
+            self.leg_spin.setValue(p.leg_swing)
+            self.arm_spin.setValue(p.arm_swing)
+            self.bob_spin.setValue(p.bob)
+            self.lean_spin.setValue(p.lean)
+        finally:
+            self._busy = False
 
     # ---------------- generazione ----------------
     def _generate(self):
+        if self._busy:
+            return
         parts = self._load_parts()
         if not parts:
             return
         self._parts = parts
         kind = self.state_combo.currentText()
         p = self._params()
+        self._last_params[kind] = p
         self._cycles = {kind: generate_cycle(parts, p)}
         self.frame_slider.blockSignals(True)
         self.frame_slider.setRange(0, max(1, len(self._cycles[kind]) - 1))
@@ -291,11 +308,15 @@ class AnimationDialog(QDialog):
         self._render_current()
 
     def _on_state_changed(self, kind):
+        if self._busy:
+            return
         self._apply_defaults(kind)
-        self._generate()
+        self._debounce.start()
 
     def _on_param_changed(self, _=None):
-        self._generate()
+        if self._busy:
+            return
+        self._debounce.start()  # rigenera una sola volta dopo la pausa
 
     # ---------------- export ----------------
     def _export(self):
@@ -308,19 +329,29 @@ class AnimationDialog(QDialog):
         if not out_dir:
             return
         H, W = self.proj.current_image.shape[:2]
+        res_txt = self.res_combo.currentText()
+        scale = float(res_txt.rstrip('%')) / 100.0
+        self.export_btn.setText(self.tr('Esportazione in corso…'))
+        self.export_btn.setEnabled(False)
+        from .export.atlas import scale_parts
+        parts = scale_parts(self._parts, scale)
+        size = (max(1, int(round(W * scale))), max(1, int(round(H * scale))))
         cycles = {}
         for kind in STATES:
-            self.state_combo.setCurrentText(kind)
-            cycles[kind] = generate_cycle(self._parts, self._params())
+            p = self._last_params.get(kind) or CycleParams.defaults(kind)
+            cycles[kind] = generate_cycle(parts, p)
         try:
-            strip, manifest, report = bake_atlas(self._parts, cycles, (W, H), padding=8)
+            strip, manifest, report = bake_atlas(parts, cycles, size, padding=8)
             sheet = save_atlas(strip, manifest, out_dir)
         except ValueError as e:
             create_info_dialog(str(e))
-            return
+        finally:
+            self.export_btn.setText(self.tr('Esporta atlas…'))
+            self.export_btn.setEnabled(True)
         create_info_dialog(
             f'Atlas esportato in:\n{sheet}\n\n'
             f'manifest.json con frame_layout ({len(STATES)} stati, '
-            f'cella {manifest["cellWidth"]}x{manifest["cellHeight"]}).\n'
+            f'cella {manifest["cellWidth"]}x{manifest["cellHeight"]}, '
+            f'risoluzione {res_txt}).\n'
             f'Compatibile col formato sprite-gen.')
         LOGGER.info(f'Atlas animato: {sheet}')

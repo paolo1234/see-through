@@ -17,11 +17,31 @@ import json
 import os
 from typing import Dict, List, Optional
 
+import cv2
 import numpy as np
 from PIL import Image
 
 from ..anim.preview import render_pose, bbox_alpha
 from ..anim.pose import Pose
+
+
+def scale_parts(parts: List[dict], s: float) -> List[dict]:
+    """Scala coordinate + immagini delle parti (per export a risoluzione ridotta).
+    Le pose vengono ricalcolate sui bbox scalati -> tutto resta coerente."""
+    if abs(s - 1.0) < 1e-6:
+        return parts
+    out = []
+    for p in parts:
+        img = np.asarray(p['img'])
+        nw = max(1, int(round(p['w'] * s)))
+        nh = max(1, int(round(p['h'] * s)))
+        if (nw, nh) != (img.shape[1], img.shape[0]):
+            img2 = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+        else:
+            img2 = img
+        out.append({**p, 'x': int(round(p['x'] * s)), 'y': int(round(p['y'] * s)),
+                    'w': nw, 'h': nh, 'area': int(p['area'] * s * s), 'img': img2})
+    return out
 
 
 def _motion_box(frames: List[np.ndarray]) -> Optional[tuple]:

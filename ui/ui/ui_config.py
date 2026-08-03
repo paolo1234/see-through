@@ -50,6 +50,13 @@ class ProgramConfig(Config):
     assembly_min_iou: float = 0.15      # Fase 3: soglia IoU voting tag
     sam_model_size: str = 'small'       # tiny | small | base+ | large (CPU: small/tiny)
 
+    # Fase 8: parametri del batch SAM (segment-everything) esposti in Impostazioni
+    sam_points_per_side: int = 16
+    sam_pred_iou_thresh: float = 0.6
+    sam_stability_score_thresh: float = 0.7
+    sam_min_mask_region_area: int = 150
+    sam_max_batch_side: int = 1024      # downscale per il batch su immagini piu' grandi
+
     seg_type = 'body_part_tag'
 
     @staticmethod

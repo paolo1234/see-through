@@ -218,8 +218,6 @@ class DrawablePathItem(QGraphicsRectItem):
 
 class DrawableItem(QGraphicsPixmapItem):
 
-    moved = Signal()
-
     def __init__(self, drawable: Drawable, canvas, parent=None, opacity=1, draw_contours=True) -> None:
         super().__init__(parent)
         self._draw_contours = draw_contours
@@ -230,7 +228,8 @@ class DrawableItem(QGraphicsPixmapItem):
         self.old_pos = None
         self.canvas = canvas
         self.setAcceptHoverEvents(True)
-        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
+                      QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         # self.setCacheMode(QGraphicsItem.CacheMode.ItemCoordinateCache)
         self.setOpacity(opacity)
         self.setDrawable(drawable)
@@ -240,6 +239,7 @@ class DrawableItem(QGraphicsPixmapItem):
         self.path_item._cnt_color = self._cnt_color
         self._block_select_signal = False
         self.selection_changed = None
+        self._drag_origin = None
 
     def setParentItem(self, parent):
         super().setParentItem(parent)
@@ -328,6 +328,25 @@ class DrawableItem(QGraphicsPixmapItem):
     def hoverLeaveEvent(self, event: QGraphicsSceneHoverEvent | None) -> None:
         self._hover_entered = False
         self.path_item.set_hover_mode(False)
+
+    # ---- Fase 8: drag per spostare il layer (undoable via canvas) ----
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.isSelected():
+            self._drag_origin = self.pos()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_origin is not None:
+            origin = self._drag_origin
+            self._drag_origin = None
+            dx = self.pos().x() - origin.x()
+            dy = self.pos().y() - origin.y()
+            # riporta l'item alla posizione di origine: il comando ricostruisce
+            # il drawable al nuovo bbox (la mask e' crop-locale, trasla il bbox)
+            self.setPos(origin)
+            if abs(dx) > 0.5 or abs(dy) > 0.5:
+                self.canvas.on_drawable_moved(self, dx, dy)
         return super().hoverLeaveEvent(event)
 
     def hoverEnterEvent(self, event: QGraphicsSceneHoverEvent) -> None:

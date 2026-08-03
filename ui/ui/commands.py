@@ -79,6 +79,7 @@ class CreateDrawablesCommand(QUndoCommand):
             self._build()
         for _, d in self.added:
             self.proj.l2dmodel.drawables.append(d)
+            self.proj.l2dmodel.did2drawable[d.did] = d
         for ins in self.instances:
             ins.applied = True
         self.proj.save_current_instances()
@@ -87,6 +88,8 @@ class CreateDrawablesCommand(QUndoCommand):
         dids = {did for did, _ in self.added}
         self.proj.l2dmodel.drawables = [
             d for d in self.proj.l2dmodel.drawables if d.did not in dids]
+        for did in dids:
+            self.proj.l2dmodel.did2drawable.pop(did, None)
         for ins in self.instances:
             ins.applied = False
         self.proj.save_current_instances()
@@ -227,3 +230,174 @@ class CommonCommand(QUndoCommand):
 
     def undo(self):
         self.func(**self.undo_kwargs)
+
+
+class DeleteInstancesCommand(QUndoCommand):
+    """Elimina layer/istanze (undoable)."""
+
+    def __init__(self, proj, instances, refresh_cb=None):
+        super().__init__('Elimina layer')
+        self.proj = proj
+        self.instances = list(instances)
+        self.refresh_cb = refresh_cb
+        lst = proj.current_instance_list
+        self._pos = [lst.index(i) for i in self.instances]
+
+    def redo(self):
+        self.proj.delete_instances(self.instances)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+    def undo(self):
+        lst = self.proj.current_instance_list
+        for pos, ins in sorted(zip(self._pos, self.instances)):
+            lst.insert(min(pos, len(lst)), ins)
+        for i in self.instances:
+            if i.applied and i.visible:
+                self.proj.rebuild_applied_drawable(i)
+        self.proj.save_current_instances()
+        if self.refresh_cb:
+            self.refresh_cb()
+
+
+class DuplicateInstancesCommand(QUndoCommand):
+    """Duplica layer (undoable)."""
+
+    def __init__(self, proj, instances, refresh_cb=None):
+        super().__init__('Duplica layer')
+        self.proj = proj
+        self.instances = list(instances)
+        self.refresh_cb = refresh_cb
+        self._new = []
+
+    def redo(self):
+        self._new = self.proj.duplicate_instances(self.instances)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+    def undo(self):
+        self.proj.delete_instances(self._new)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+
+class MoveInstanceCommand(QUndoCommand):
+    """Sposta un layer di (dx, dy) px (undoable)."""
+
+    def __init__(self, proj, ins, dx, dy, refresh_cb=None):
+        super().__init__('Sposta layer')
+        self.proj = proj
+        self.ins = ins
+        self.dx = int(dx)
+        self.dy = int(dy)
+        self.refresh_cb = refresh_cb
+
+    def redo(self):
+        self.proj.move_instance(self.ins, self.dx, self.dy)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+    def undo(self):
+        self.proj.move_instance(self.ins, -self.dx, -self.dy)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+
+class SetInstancesVisibleCommand(QUndoCommand):
+    """Mostra/nascondi layer (undoable)."""
+
+    def __init__(self, proj, instances, visible, refresh_cb=None):
+        super().__init__('Mostra/nascondi layer')
+        self.proj = proj
+        self.instances = list(instances)
+        self.visible = bool(visible)
+        self.refresh_cb = refresh_cb
+
+    def redo(self):
+        self.proj.set_instances_visible(self.instances, self.visible)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+    def undo(self):
+        self.proj.set_instances_visible(self.instances, not self.visible)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+
+class RenameInstanceCommand(QUndoCommand):
+    """Rinomina un layer (undoable)."""
+
+    def __init__(self, proj, ins, name, refresh_cb=None):
+        super().__init__('Rinomina layer')
+        self.proj = proj
+        self.ins = ins
+        self.name = name
+        self._prev = ins.name
+        self.refresh_cb = refresh_cb
+
+    def redo(self):
+        self.proj.rename_instance(self.ins, self.name)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+    def undo(self):
+        self.proj.rename_instance(self.ins, self._prev)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+
+class ReorderInstancesCommand(QUndoCommand):
+    """Sposta un layer su/giu nell'ordine di disegno (undoable)."""
+
+    def __init__(self, proj, ins, delta, refresh_cb=None):
+        super().__init__('Riordina layer')
+        self.proj = proj
+        self.ins = ins
+        self.delta = int(delta)
+        self.refresh_cb = refresh_cb
+
+    def redo(self):
+        self.proj.reorder_instance(self.ins, self.delta)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+    def undo(self):
+        self.proj.reorder_instance(self.ins, -self.delta)
+        if self.refresh_cb:
+            self.refresh_cb()
+
+
+class PasteInstancesCommand(QUndoCommand):
+    """Incolla layer dagli appunti (copie applicate, undoable)."""
+
+    def __init__(self, proj, templates, refresh_cb=None):
+        super().__init__('Incolla layer')
+        self.proj = proj
+        self.templates = list(templates)
+        self.refresh_cb = refresh_cb
+        self._new = []
+
+    def _make(self):
+        import copy
+        new = []
+        for t in self.templates:
+            c = copy.deepcopy(t)
+            c.idx = self.proj.next_free_idx()
+            c.applied = True
+            c.visible = True
+            c.name = (t.name or f'inst://{self.proj.current_model}/{t.idx}') + ' (copia)'
+            self.proj.current_instance_list.append(c)
+            new.append(c)
+            self.proj.rebuild_applied_drawable(c)
+        self.proj.save_current_instances()
+        return new
+
+    def redo(self):
+        self._new = self._make()
+        if self.refresh_cb:
+            self.refresh_cb()
+
+    def undo(self):
+        self.proj.delete_instances(self._new)
+        if self.refresh_cb:
+            self.refresh_cb()

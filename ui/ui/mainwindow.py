@@ -20,6 +20,10 @@ from .canvas import Canvas, DrawableItem
 from .misc import parse_stylesheet, QKEY
 from .framelesswindow import FramelessWindow
 from .mainwindowbars import LeftBar, TitleBar, BottomBar
+from .commands import (DeleteInstancesCommand, DuplicateInstancesCommand,
+                       MoveInstanceCommand, SetInstancesVisibleCommand,
+                       RenameInstanceCommand, ReorderInstancesCommand,
+                       PasteInstancesCommand)
 from .tag_tree import TagTree, DrawablePreview
 from .io_thread import ProjSaveThread
 from .message import FrameLessMessageBox, MessageBox
@@ -122,6 +126,7 @@ class MainWindow(FramelessWindow):
         self.run_thread.progress.connect(self.on_run_progress)
         self.run_thread.status_msg.connect(self.on_run_status)
         self.topArea.anim_requested.connect(self.on_anim_requested)
+        self.topArea.settings_requested.connect(self.on_settings_requested)
         self.candidates_list.itemDoubleClicked.connect(self.on_candidate_activate)
         self.apply_candidates_btn.clicked.connect(self.apply_candidates)
         self.merge_sel_btn.clicked.connect(self.on_merge_selected)
@@ -153,6 +158,14 @@ class MainWindow(FramelessWindow):
         self.tagtree.show_all_tags.connect(self.on_show_all_tags)
         self.tagtree.propagate_page.connect(self.on_propagate_page)
         self.tagtree.search_page.connect(self.on_show_page_search)
+
+        # Fase 8: operazioni layer (menu contestuale + shortcut tree)
+        self.tagtree.delete_drawables.connect(self.on_delete_drawables)
+        self.tagtree.duplicate_drawables.connect(self.on_duplicate_drawables)
+        self.tagtree.rename_drawable.connect(self.on_rename_drawable)
+        self.tagtree.move_drawable_up.connect(lambda: self.on_reorder_selected(-1))
+        self.tagtree.move_drawable_down.connect(lambda: self.on_reorder_selected(1))
+        self.tagtree.drawable_visibility_changed.connect(self.on_drawable_visibility_changed)
 
     def on_show_page_search(self):
         if not self.canvas.gv.isVisible():
@@ -363,17 +376,111 @@ class MainWindow(FramelessWindow):
         self._refresh_tagtree()
 
     def _refresh_tagtree(self):
-        """Risincronizza la tag tree con le drawables correnti (dopo Apply/Edit/Split/Merge)."""
+        """Risincronizza la tag tree con le drawables correnti (dopo Apply/Edit/Split/Merge/layer ops)."""
         if not self.proj.model_valid:
             return
         dids, tag_list = self.proj.get_did_tag_pairs(pcfg.seg_type)
-        self.tagtree.update_drawable_lst(dids, tag_list)
+        ins_by_did = {f'inst://{self.proj.current_model}/{i.idx}': i
+                      for i in self.proj.current_instance_list}
+        visible_lst = [ins_by_did.get(d, None).visible if ins_by_did.get(d) else True for d in dids]
+        name_lst = [ins_by_did.get(d).name if ins_by_did.get(d) else None for d in dids]
+        self.tagtree.update_drawable_lst(dids, tag_list, visible_lst, name_lst)
 
     def _find_instance(self, idx):
         for i in self.proj.current_instance_list:
             if i.idx == idx:
                 return i
         return None
+
+    # ---------------- Fase 8: operazioni sui livelli ----------------
+    def _instances_from_dids(self, dids):
+        by_idx = {i.idx: i for i in self.proj.current_instance_list}
+        out = []
+        for did in dids:
+            if not did or not did.startswith('inst://'):
+                continue
+            try:
+                idx = int(did.rsplit('/', 1)[1])
+            except (ValueError, IndexError):
+                continue
+            if idx in by_idx:
+                out.append(by_idx[idx])
+        return out
+
+    def _selected_instances(self):
+        """Istanza selezionate: dalla tag tree e/o dal canvas."""
+        dids = list(self.tagtree.get_selected_drawable_ids())
+        for it in self.canvas.selected_drawable_items():
+            dids.append(it.drawable.did)
+        return self._instances_from_dids(list(dict.fromkeys(dids)))
+
+    def _after_layer_mutation(self):
+        """Refresh completo dopo comandi layer (canvas + tree + salvataggio)."""
+        self.canvas.refreshDrawableItems()
+        self._refresh_tagtree()
+
+    def on_delete_drawables(self):
+        ins = self._selected_instances()
+        if not ins:
+            return
+        self.canvas.push_undo_command(
+            DeleteInstancesCommand(self.proj, ins, refresh_cb=self._after_layer_mutation))
+
+    def on_duplicate_drawables(self):
+        ins = self._selected_instances()
+        if not ins:
+            return
+        self.canvas.push_undo_command(
+            DuplicateInstancesCommand(self.proj, ins, refresh_cb=self._after_layer_mutation))
+
+    def on_rename_drawable(self):
+        ins = self._selected_instances()
+        if not ins:
+            return
+        ins = ins[0]
+        cur = ins.name or f'inst://{self.proj.current_model}/{ins.idx}'
+        name, ok = QInputDialog.getText(self, self.tr('Rinomina layer'), self.tr('Nome layer:'), text=cur)
+        if not ok or not name.strip():
+            return
+        self.canvas.push_undo_command(
+            RenameInstanceCommand(self.proj, ins, name.strip(), refresh_cb=self._after_layer_mutation))
+
+    def on_reorder_selected(self, delta):
+        ins = self._selected_instances()
+        if not ins:
+            return
+        for i in ins:
+            self.canvas.push_undo_command(
+                ReorderInstancesCommand(self.proj, i, delta, refresh_cb=self._after_layer_mutation))
+
+    def on_drawable_visibility_changed(self, did, visible):
+        ins = self._instances_from_dids([did])
+        if not ins:
+            return
+        self.canvas.push_undo_command(
+            SetInstancesVisibleCommand(self.proj, ins, visible, refresh_cb=self._after_layer_mutation))
+
+    # ---------------- Fase 8: clipboard (copy/cut/paste) ----------------
+    def copy_selected(self):
+        ins = self._selected_instances()
+        if not ins:
+            return
+        import copy as _copy
+        self._clipboard = [(_copy.deepcopy(i), self.proj.current_model) for i in ins]
+        self.on_run_status(self.tr(f'Copiati {len(ins)} layer negli appunti'))
+
+    def cut_selected(self):
+        self.copy_selected()
+        self.on_delete_drawables()
+
+    def paste_clipboard(self):
+        if not getattr(self, '_clipboard', None):
+            self.on_run_status(self.tr('Appunti vuoti: copia prima un layer (Ctrl+C)'))
+            return
+        templates = [c for c, _ in self._clipboard]
+        self.canvas.push_undo_command(
+            PasteInstancesCommand(self.proj, templates, refresh_cb=self._after_layer_mutation))
+        self.on_run_status(self.tr(f'Incollati {len(templates)} layer'))
 
     def on_edit_mask(self, idx):
         ins = self._find_instance(idx)
@@ -504,7 +611,9 @@ class MainWindow(FramelessWindow):
     def on_reveal_drawable(self):
         sel_dids = self.tagtree.get_selected_drawable_ids()
         if len(sel_dids) > 0:
-            drawable = self.proj.l2dmodel.did2drawable[sel_dids[-1]]
+            drawable = self.proj.l2dmodel.did2drawable.get(sel_dids[-1])
+            if drawable is None or not drawable.src_path:
+                return
             src_path = drawable.src_path
             if sys.platform == 'win32':
                 # qprocess seems to fuck up with "\""
@@ -532,7 +641,8 @@ class MainWindow(FramelessWindow):
         sel_dids = self.tagtree.get_selected_drawable_ids()
         if len(sel_dids) == 0:
             return
-        sel_src_tags = [self.proj.l2dmodel.did2drawable[d].tag for d in sel_dids]
+        sel_src_tags = [self.proj.l2dmodel.did2drawable[d].tag for d in sel_dids
+                        if d in self.proj.l2dmodel.did2drawable]
         sel_tgt_tags = [tag] * len(sel_dids)
         self.canvas.push_undo_command(
             SetDrawableTagCommand(
@@ -611,8 +721,9 @@ class MainWindow(FramelessWindow):
     def on_tagtree_selection_changed(self, did, selected, is_last):
         self.canvas.update_drawable_selection(did, selected, ensure_visible=is_last)
         if selected and is_last:
-            d = self.proj.l2dmodel.did2drawable[did]
-            self.drawable_preview.updateDrawable(d, self.canvas.get_tagitem(d.tag).img)
+            d = self.proj.l2dmodel.did2drawable.get(did)
+            if d is not None:
+                self.drawable_preview.updateDrawable(d, self.canvas.get_tagitem(d.tag).img)
 
     def on_export_sucess(self, msg: str):
         create_info_dialog(msg)
@@ -717,6 +828,11 @@ class MainWindow(FramelessWindow):
             return
         self.run_thread.runSegmentation(self.proj, provider, boxes=[box])
 
+    def on_settings_requested(self):
+        from .settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self)
+        dlg.exec_()
+
     def on_anim_requested(self):
         """Apre il dialogo Cycle Animation sulle parti della pagina corrente."""
         from .anim_dialog import AnimationDialog
@@ -744,7 +860,7 @@ class MainWindow(FramelessWindow):
         for ins in self.proj.current_instance_list:
             if ins.idx == idx:
                 x, y, w, h = ins.bbox
-                self.canvas.ensureVisible(QRectF(x, y, w, h))
+                self.canvas.gv.ensureVisible(QRectF(x, y, w, h))
                 break
 
     def on_candidate_delete(self, idx):
@@ -933,6 +1049,23 @@ class MainWindow(FramelessWindow):
         shortcutBox.activated.connect(self.shortcutBoxTool)
         shortcutPoint = QShortcut(QKeySequence("P"), self)
         shortcutPoint.activated.connect(self.shortcutPointTool)
+
+        # Fase 8: clipboard + delete globali (Ctrl+C/V/X, Canc, Ctrl+D)
+        sc_copy = QShortcut(QKeySequence.StandardKey.Copy, self)
+        sc_copy.activated.connect(self.copy_selected)
+        sc_cut = QShortcut(QKeySequence.StandardKey.Cut, self)
+        sc_cut.activated.connect(self.cut_selected)
+        sc_paste = QShortcut(QKeySequence.StandardKey.Paste, self)
+        sc_paste.activated.connect(self.paste_clipboard)
+        sc_del = QShortcut(QKeySequence.StandardKey.Delete, self)
+        sc_del.activated.connect(self.on_delete_drawables)
+        sc_dup = QShortcut(QKeySequence('Ctrl+D'), self)
+        sc_dup.activated.connect(self.on_duplicate_drawables)
+        sc_save = QShortcut(QKeySequence.StandardKey.Save, self)
+        sc_save.activated.connect(self.conditional_manual_save)
+        sc_selall = QShortcut(QKeySequence.StandardKey.SelectAll, self)
+        sc_selall.activated.connect(self.canvas.selectAll)
+        self._clipboard = []
 
     def shortcutBoxTool(self):
         self.topArea.box_tool_check.setChecked(not self.topArea.box_tool_check.isChecked())

@@ -102,14 +102,15 @@ class SAMProvider(InferenceProvider):
             device = 'cpu'
         sam.build_model(self.weight_id, device=device)
         # generazione automatica leggera per CPU: niente multi-crop,
-        # griglia 16x16, soglie basse, maschere <150px scartate
+        # parametri configurabili da Impostazioni (pcfg.sam_*)
+        from .ui_config import pcfg
         from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
         sam.mask_generator = SAM2AutomaticMaskGenerator(
             model=sam.model,
-            points_per_side=16,
-            pred_iou_thresh=0.6,
-            stability_score_thresh=0.7,
-            min_mask_region_area=150,
+            points_per_side=int(getattr(pcfg, 'sam_points_per_side', 16)),
+            pred_iou_thresh=float(getattr(pcfg, 'sam_pred_iou_thresh', 0.6)),
+            stability_score_thresh=float(getattr(pcfg, 'sam_stability_score_thresh', 0.7)),
+            min_mask_region_area=int(getattr(pcfg, 'sam_min_mask_region_area', 150)),
             crop_n_layers=0,
         )
         return sam
@@ -149,7 +150,8 @@ class SAMProvider(InferenceProvider):
         h, w = img.shape[:2]
         scale = 1.0
         img_in = img
-        max_side = 1024
+        from .ui_config import pcfg
+        max_side = int(getattr(pcfg, 'sam_max_batch_side', 1024)) or 1024
         if max(h, w) > max_side:
             scale = max_side / max(h, w)
             new_w, new_h = max(1, int(round(w * scale))), max(1, int(round(h * scale)))

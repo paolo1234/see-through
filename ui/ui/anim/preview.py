@@ -49,16 +49,27 @@ def transform_part(crop: np.ndarray, pivot: tuple, angle_deg: float,
 
     # matrice inversa su coordinate GLOBALI -> il buffer dst e' posizionato a (gx0, gy0)
     RSinv = np.linalg.inv(RS)
-    # input_crop = RSinv @ (q - p0 - d) + p0 - off
-    b = -RSinv @ (p0 + d) + p0 - np.asarray([ox, oy], dtype=np.float64)
-    A = np.hstack([RSinv, b.reshape(2, 1)])
-    # shift: dst(i,j) == globale(gx0+i, gy0+j) -> compongo la traslazione
-    A[0, 2] += RSinv[0, 0] * gx0 + RSinv[0, 1] * gy0
-    A[1, 2] += RSinv[1, 0] * gx0 + RSinv[1, 1] * gy0
 
-    warped = cv2.warpAffine(crop, A, (dw, dh),
-                            flags=cv2.INTER_LINEAR,
-                            borderMode=cv2.BORDER_TRANSPARENT)
+    # NB: NON usiamo cv2.warpAffine/warpPerspective: alcune build di
+    # opencv (es. opencv-python 4.13 su Windows) applicano la matrice con
+    # convenzione trasposta e producono output VUOTO per rotazioni ~90°.
+    # cv2.remap con mappe esplicite e' un sampler puro: deterministico su
+    # ogni macchina. BORDER_TRANSPARENT non inizializza il dst -> lo
+    # pre-azzeriamo (pixel fuori-sorgente restano trasparenti, niente
+    # memoria spazzatura -> niente alpha flaky).
+    dst = np.zeros((dh, dw, 4), dtype=np.uint8)
+    mapx = np.empty((dh, dw), dtype=np.float32)
+    mapy = np.empty((dh, dw), dtype=np.float32)
+    for j in range(dh):
+        # q = (x, y) globali del pixel dst (i, j)
+        q = np.stack([gx0 + np.arange(dw, dtype=np.float64),
+                      np.full(dw, gy0 + j, dtype=np.float64)], axis=-1)
+        # input_crop = RSinv @ (q - p0 - d) + (p0 - off)
+        pl = (q - (p0 + d)) @ RSinv.T + (p0 - np.asarray([ox, oy], dtype=np.float64))
+        mapx[j] = pl[:, 0]
+        mapy[j] = pl[:, 1]
+    warped = cv2.remap(crop, mapx, mapy, cv2.INTER_LINEAR, dst=dst,
+                       borderMode=cv2.BORDER_TRANSPARENT)
     return warped, gx0, gy0
 
 
