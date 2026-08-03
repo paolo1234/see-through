@@ -118,6 +118,7 @@ class Canvas(QGraphicsScene):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.scale_factor = 1.
+        self._fit_on_resize = False
         self.text_transparency = 0
         self.creating_rect = False
         self.create_rect_origin: QPointF = None
@@ -365,6 +366,7 @@ class Canvas(QGraphicsScene):
         scrollBar.setValue(int(factor * scrollBar.value() + ((factor - 1) * scrollBar.pageStep() / 2)))
 
     def scaleImage(self, factor: float, scale_to=False, emit_changed=True):
+        self._fit_on_resize = False  # zoom manuale: niente piu' auto-fit al resize
         if not self.gv.isVisible() or not self.proj.model_valid:
             return
         
@@ -386,7 +388,36 @@ class Canvas(QGraphicsScene):
                 self.scalefactor_changed.emit()
         self.setSceneRect(0, 0, self.baseLayer.sceneBoundingRect().width(), self.baseLayer.sceneBoundingRect().height())
 
+    def fit_image_to_view(self):
+        """Auto-fit: scala l'immagine per farla stare intera nel viewport
+        (mai oltre 1:1 per immagini piccole). Usata al cambio pagina."""
+        if self.base_pixmap is None or self.proj is None:
+            return
+        if self.gv.width() <= 10 or self.gv.height() <= 10:
+            return  # viewport non ancora layoutato
+        im_w = self.base_pixmap.width()
+        im_h = self.base_pixmap.height()
+        if im_w <= 0 or im_h <= 0:
+            return
+        vw = max(self.gv.viewport().width(), 1)
+        vh = max(self.gv.viewport().height(), 1)
+        f = min(vw / im_w, vh / im_h) * 0.98
+        f = np.clip(f, CANVAS_SCALE_MIN, 1.0)
+        self.scale_factor = float(f)
+        self._fit_on_resize = True  # ri-fitta al resize finche' l'utente non zoomma
+        self.baseLayer.setScale(self.scale_factor)
+        self.rect_tool.updateScale(self.scale_factor)
+        self.scaleFactorLabel.setText(f'{self.scale_factor*100:2.0f}%')
+        self.scalefactor_changed.emit()
+        self.setSceneRect(0, 0,
+                          self.baseLayer.sceneBoundingRect().width(),
+                          self.baseLayer.sceneBoundingRect().height())
+        self.gv.horizontalScrollBar().setValue(0)
+        self.gv.verticalScrollBar().setValue(0)
+
     def onViewResized(self):
+        if getattr(self, '_fit_on_resize', False):
+            self.fit_image_to_view()
         gv_w, gv_h = self.gv.geometry().width(), self.gv.geometry().height()
 
         x = gv_w - self.scaleFactorLabel.width()
@@ -599,7 +630,7 @@ class Canvas(QGraphicsScene):
             self.baseLayer.setRect(QRectF(im_rect))
             if im_rect != self.sceneRect():
                 self.setSceneRect(0, 0, im_rect.width(), im_rect.height())
-            self.scaleImage(1)
+            self.fit_image_to_view()
 
         for ins in self.proj.l2dmodel.valid_drawables():
             ti = self.get_tagitem(ins.tag)
