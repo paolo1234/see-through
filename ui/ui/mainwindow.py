@@ -9,7 +9,7 @@ import os
 
 from PIL import Image
 import numpy as np
-from qtpy.QtWidgets import QFileDialog, QMessageBox, QListWidgetItem, QApplication, QListWidget, QMenu, QStackedWidget, QHBoxLayout, QSplitter, QVBoxLayout, QShortcut, QPushButton, QInputDialog, QWidget, QAbstractItemView
+from qtpy.QtWidgets import QFileDialog, QMessageBox, QListWidgetItem, QApplication, QListWidget, QMenu, QStackedWidget, QHBoxLayout, QSplitter, QVBoxLayout, QShortcut, QPushButton, QInputDialog, QWidget, QAbstractItemView, QCheckBox
 from qtpy.QtCore import Signal, QSize, Qt, QRectF
 from qtpy.QtGui import QGuiApplication, QContextMenuEvent, QIcon, QCloseEvent, QKeySequence
 import py7zr
@@ -123,6 +123,8 @@ class MainWindow(FramelessWindow):
         self.candidates_list.itemDoubleClicked.connect(self.on_candidate_activate)
         self.apply_candidates_btn.clicked.connect(self.apply_candidates)
         self.merge_sel_btn.clicked.connect(self.on_merge_selected)
+        self.show_cand_check.toggled.connect(self.on_show_candidates_toggled)
+        self.on_show_candidates_toggled(self.show_cand_check.isChecked())
         
         # self.topArea.show_colormask.connect(self.on_show_colormask)
         self.titleBar.undo_trigger.connect(self.canvas.undo)
@@ -347,6 +349,9 @@ class MainWindow(FramelessWindow):
             self.on_candidate_delete(idx)
         elif act == act_export:
             self.export_candidate_cutout(idx)
+
+    def on_show_candidates_toggled(self, show: bool):
+        self.canvas.set_candidates_overlay(show)
 
     def _refresh_after_assembly(self):
         """Aggiorna modello/canvas/lista dopo comandi che toccano le istanze."""
@@ -701,6 +706,8 @@ class MainWindow(FramelessWindow):
             it.setData(Qt.ItemDataRole.UserRole, ins.idx)
             self.candidates_list.addItem(it)
         self.candidates_list.blockSignals(False)
+        if self.show_cand_check.isChecked():
+            self.canvas.refresh_candidate_overlay()
 
     def on_candidate_activate(self, item):
         idx = item.data(Qt.ItemDataRole.UserRole)
@@ -785,9 +792,12 @@ class MainWindow(FramelessWindow):
             self.tr('Vota i tag per overlap e crea le parti editabili (undo-able)'))
         self.merge_sel_btn = QPushButton(self.tr('Merge sel.'))
         self.merge_sel_btn.setToolTip(self.tr('Fonde i candidati selezionati (Ctrl+click)'))
+        self.show_cand_check = QCheckBox(self.tr('Show candidates'))
+        self.show_cand_check.setChecked(True)
         btn_row = QHBoxLayout()
         btn_row.addWidget(self.apply_candidates_btn)
         btn_row.addWidget(self.merge_sel_btn)
+        btn_row.addWidget(self.show_cand_check)
         cand_header = QWidget()
         cand_lo = QVBoxLayout(cand_header)
         cand_lo.setContentsMargins(4, 2, 4, 2)

@@ -3,9 +3,9 @@ import os
 import os.path as osp
 
 import numpy as np
-from qtpy.QtWidgets import QMenu, QGraphicsScene, QGraphicsView, QGraphicsSceneDragDropEvent, QGraphicsRectItem, QGraphicsItem, QScrollBar, QGraphicsPixmapItem, QGraphicsSceneMouseEvent, QRubberBand
+from qtpy.QtWidgets import QMenu, QGraphicsScene, QGraphicsView, QGraphicsSceneDragDropEvent, QGraphicsRectItem, QGraphicsItem, QScrollBar, QGraphicsPixmapItem, QGraphicsSceneMouseEvent, QRubberBand, QGraphicsSimpleTextItem
 from qtpy.QtCore import Qt, QRectF, QPointF, QPoint, Signal, QSizeF
-from qtpy.QtGui import QAction, QPixmap, QHideEvent, QKeyEvent, QWheelEvent, QResizeEvent, QPainter, QPen, QPainterPath, QCursor, QNativeGestureEvent
+from qtpy.QtGui import QAction, QPixmap, QHideEvent, QKeyEvent, QWheelEvent, QResizeEvent, QPainter, QPen, QPainterPath, QCursor, QNativeGestureEvent, QColor, QBrush, QFont, QPolygonF
 try:
     from qtpy.QtWidgets import QUndoStack, QUndoCommand
 except:
@@ -123,6 +123,9 @@ class Canvas(QGraphicsScene):
         self.create_rect_origin: QPointF = None
         self.insitem_list: List[DrawableItem] = []
         self.did2drawableitem: dict[str, DrawableItem] = {}
+        # Fase 4: overlay candidati sul canvas (maschere colorate per tag)
+        self.show_cand_overlay = False
+        self.cand_overlay_items: List[QGraphicsItem] = []
 
         self.gv = CustomGV(self)
         self.gv.scale_down_signal.connect(self.scaleDown)
@@ -609,6 +612,7 @@ class Canvas(QGraphicsScene):
             # self.addItem(item)
             # item.setParentItem(self.baseLayer)
             item.update_path(self.proj.l2dmodel)
+        self.refresh_candidate_overlay()
 
     def hide_rubber_band(self):
         if self.rubber_band.isVisible():
@@ -697,6 +701,55 @@ class Canvas(QGraphicsScene):
             item.setVisible(visible)
             item.setParentItem(self.baseLayer)
             self.did2drawableitem[item.drawable.did] = item
+        self.refresh_candidate_overlay()
+
+    def set_candidates_overlay(self, show: bool):
+        """Mostra/nasconde l'overlay dei candidati non applicati."""
+        self.show_cand_overlay = bool(show)
+        self.refresh_candidate_overlay()
+
+    def refresh_candidate_overlay(self):
+        """(Ri)disegna le maschere candidato non applicate: colore per tag + idx."""
+        for it in self.cand_overlay_items:
+            self.removeItem(it)
+        self.cand_overlay_items = []
+        if not self.show_cand_overlay or self.proj is None:
+            return
+        try:
+            insts = self.proj.current_instance_list
+        except Exception:  # noqa: BLE001
+            return
+        colors = {}
+        for ins in insts:
+            if ins.applied:
+                continue
+            tag = ins.tag or 'unknown'
+            col = colors.setdefault(tag, QColor.fromHsv(
+                (hash(tag) % 360), 180, 235))
+            col.setAlpha(110)
+            x0, y0, _, _ = ins.bbox
+            try:
+                cnts = ins.get_contours()
+            except Exception:  # noqa: BLE001
+                cnts = []
+            for c in cnts or []:
+                poly = QPolygonF([QPointF(float(p[0][0]) + x0,
+                                          float(p[0][1]) + y0) for p in c])
+                it = self.addPolygon(poly, QPen(col.darker(130)),
+                                     QBrush(col))
+                it.setParentItem(self.baseLayer)
+                it.setZValue(0.5)
+                self.cand_overlay_items.append(it)
+            txt = QGraphicsSimpleTextItem(f'#{ins.idx} {tag}')
+            txt.setBrush(QColor(255, 255, 255))
+            f = txt.font()
+            f.setPointSizeF(9.0)
+            txt.setFont(f)
+            x, y, _, _ = ins.bbox
+            txt.setPos(float(x) + 2, float(y) + 2)
+            txt.setParentItem(self.baseLayer)
+            txt.setZValue(0.6)
+            self.cand_overlay_items.append(txt)
 
     def on_undostack_changed(self):
         if self.pushed_undo_step != self.saved_undo_step:
