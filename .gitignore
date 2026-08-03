@@ -42,3 +42,7 @@ local_*
 ui/ui/config/config.json
 ui/ui/logs/
 ui/tmp/
+
+# Sample project runtime
+ui/sample_project/**/instances.json
+ui/sample_project/**/layered/

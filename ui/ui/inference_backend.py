@@ -117,6 +117,8 @@ class SAMProvider(InferenceProvider):
             x, y = int(xs.min()), int(ys.min())
             w = int(xs.max()) - x + 1
             h = int(ys.max()) - y + 1
+            # convenzione: Instance.mask e' CROP-LOCALE (bbox-relative)
+            m = m[y:y + h, x:x + w]
             instances.append(Instance(mask=m.astype(np.uint8),
                                       bbox=[x, y, w, h],
                                       score=float(s), idx=len(instances)))

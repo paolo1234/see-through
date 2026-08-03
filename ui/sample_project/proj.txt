@@ -1,0 +1,2 @@
+chars/heroA/final.png
+chars/heroB/final.png

@@ -48,6 +48,7 @@ class SegmentationThread(ThreadBase):
             self.manual_inference_finished.emit([])
             return
         try:
+            provider.load_model()  # lazy: carica anche nei path box/point
             new_instances = provider.infer_img(img, boxes=boxes, points=points, labels=labels)
         except Exception as e:  # noqa: BLE001
             LOGGER.exception('Inferenza manuale fallita')

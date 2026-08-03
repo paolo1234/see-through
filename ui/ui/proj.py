@@ -104,12 +104,19 @@ class ProjSeg:
         pages = {}
         self.directory = osp.dirname(txt_path)
         for f in flist:
-            if osp.isfile(f):
-                f = osp.dirname(f)
+            if not f or not f.strip():
+                continue  # righe vuote / newline finali
+            f = f.strip()
+            # risolvi rispetto alla cartella del txt (path relativi)
+            fp = f if osp.isabs(f) else osp.join(self.directory, f)
+            if osp.isfile(fp):
+                f = osp.dirname(fp)
+            elif not osp.isdir(fp):
+                continue  # percorso inesistente: skippa
+            f = osp.relpath(f, self.directory)  # chiave pagina relativa
             srcd = 'workspace/datasets/' + osp.basename(self.directory) + '/'
             if f.startswith(srcd):
                 f = f[len(srcd):]
-            # f = osp.relpath(f, self.directory)
             pages[f] = []
         self.load_from_dict({'pages': pages, 'directory': self.directory})
 
