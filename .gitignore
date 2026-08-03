@@ -46,3 +46,6 @@ ui/tmp/
 # Sample project runtime
 ui/sample_project/**/instances.json
 ui/sample_project/**/layered/
+
+# Progetto personale utente (immagine non versionata)
+ui/project_player/player/

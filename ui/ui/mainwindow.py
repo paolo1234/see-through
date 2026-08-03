@@ -652,6 +652,7 @@ class MainWindow(FramelessWindow):
                 self.topArea.set_running(False)
                 return
             self.run_thread.runSegmentation(self.proj, provider)
+            self.topArea.set_running(True)
             self.bottomBar.progress_bar.show()
             self.bottomBar.progress_bar.updateProgress(0)
         else:

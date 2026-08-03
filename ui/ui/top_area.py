@@ -83,15 +83,18 @@ class TagCombobox(SmallComboBox):
 class RunButton(QToolButton):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        self.running = False
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon);
         self.setRunState()
 
     def setRunState(self):
+        self.running = False
         self.setText(self.tr('Run'))
         self.setIcon(QIcon('assets/icons/run-start.svg'))
 
     def setStopState(self):
+        self.running = True
         self.setText(self.tr('Stop'))
         self.setIcon(QIcon('assets/icons/run-stop.svg'))
     
@@ -192,7 +195,11 @@ class TopArea(Widget):
             save_config()
 
     def on_run_pressed(self):
-        # RunButton ha gia' flippato self.run_btn.running
+        # flip dello stato al click: Run->Stop (parte il batch) / Stop->Run (stop)
+        if self.run_btn.running:
+            self.run_btn.setRunState()
+        else:
+            self.run_btn.setStopState()
         self.run_requested.emit(self.run_btn.running)
 
     def on_prompt_tool(self):
@@ -216,10 +223,8 @@ class TopArea(Widget):
     def set_running(self, running: bool):
         if running:
             self.run_btn.setStopState()
-            self.run_btn.running = True
         else:
             self.run_btn.setRunState()
-            self.run_btn.running = False
 
     def setupConfig(self, config: ProgramConfig):
         segparams = self.seg_params_widget
