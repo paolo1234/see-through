@@ -121,6 +121,7 @@ class MainWindow(FramelessWindow):
         self.canvas.export_cutout.connect(self.export_cutout)
         self.run_thread.progress.connect(self.on_run_progress)
         self.run_thread.status_msg.connect(self.on_run_status)
+        self.topArea.anim_requested.connect(self.on_anim_requested)
         self.candidates_list.itemDoubleClicked.connect(self.on_candidate_activate)
         self.apply_candidates_btn.clicked.connect(self.apply_candidates)
         self.merge_sel_btn.clicked.connect(self.on_merge_selected)
@@ -706,6 +707,12 @@ class MainWindow(FramelessWindow):
             create_error_dialog(e, 'Provider non disponibile')
             return
         self.run_thread.runSegmentation(self.proj, provider, boxes=[box])
+
+    def on_anim_requested(self):
+        """Apre il dialogo Cycle Animation sulle parti della pagina corrente."""
+        from .anim_dialog import AnimationDialog
+        dlg = AnimationDialog(self.proj, self)
+        dlg.exec_()
 
     # ---------- Pannello candidati ----------
     def refresh_candidates(self):

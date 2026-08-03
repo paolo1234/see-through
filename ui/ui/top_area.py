@@ -1,4 +1,4 @@
-from qtpy.QtWidgets import QCheckBox, QLabel, QMenu, QStackedWidget, QHBoxLayout, QToolButton, QVBoxLayout
+from qtpy.QtWidgets import QCheckBox, QLabel, QMenu, QStackedWidget, QHBoxLayout, QToolButton, QVBoxLayout, QPushButton
 from qtpy.QtCore import Qt, Signal
 from qtpy.QtGui import QMouseEvent, QIcon, QKeyEvent, QIntValidator
 from .widget import Widget
@@ -101,6 +101,8 @@ class RunButton(QToolButton):
 
 class TopArea(Widget):
 
+    anim_requested = Signal()
+
     tag_changed = Signal(str)
     # Fase 2: run batch / tool di prompt
     run_requested = Signal(bool)
@@ -143,6 +145,10 @@ class TopArea(Widget):
         self.run_btn = RunButton()
         self.run_btn.pressed.connect(self.on_run_pressed)
 
+        self.anim_btn = QPushButton(self.tr('Anim'))
+        self.anim_btn.setToolTip(self.tr('Cycle animation: genera idle/walk/run dalle parti e esporta atlas'))
+        self.anim_btn.clicked.connect(self.on_anim_requested)
+
         self.provider_selector, _, provider_lo = combobox_with_label(
             self.tr('Engine'), options=AVAILABLE_PROVIDERS, size='small', editable=False)
         self.provider_selector.currentTextChanged.connect(self.on_provider_changed)
@@ -170,6 +176,7 @@ class TopArea(Widget):
         model_layout.addLayout(mask_opacity_layout)
         model_layout.addWidget(self.show_contour_checkbox)
         model_layout.addWidget(self.run_btn)
+        model_layout.addWidget(self.anim_btn)
         model_layout.addLayout(cls_list_combobox_lo)
         model_layout.addLayout(provider_lo)
         model_layout.addLayout(samsize_lo)
@@ -193,6 +200,10 @@ class TopArea(Widget):
     def set_status(self, msg: str):
         self.status_label.setText(msg)
         self.status_label.setToolTip(msg)
+
+    # ---------- cycle animation ----------
+    def on_anim_requested(self):
+        self.anim_requested.emit()
 
     # ---------- Fase 2: handler run/prompt ----------
     def on_provider_changed(self, name: str):

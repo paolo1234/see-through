@@ -69,7 +69,7 @@ sx/dx, gamba sx/dx...) con maschera + alpha, pronte per rigging.
 | Edit maschere (pennello, split, merge) | ✅ fatto |
 | Apply as parts + undo + persistenza | ✅ fatto |
 | Export layered PNG + manifest | ✅ fatto |
-| Tagging semantico parti | ❌ **da fare**: auto (euristiche di posizione+proporzioni + opz. CLIP) e manuale (combo già in UI) |
+| Tagging semantico parti | ✅ fatto (euristiche geometriche, `ui/ui/tagging.py`, tag canonici lowercase, esclusione background) |
 | **Inpaint delle parti occluse** | ⚠️ da pianificare: è il cuore del paper (layerdiff3d, GPU). Su CPU: fallback "extend from edges" per MVP, vero inpaint su Colab (script `inference_psd.py` già esistente) |
 | Ordinamento profondità (z-order) | ⚠️ parziale: ordine drawables; il paper usa depth (marigold). MVP: euristiche + override manuale |
 
@@ -126,7 +126,7 @@ Generatore **parametrico** di cycle animation senza bisogno di animare a mano:
 
 | Formato | Uso | Stato |
 |---|---|---|
-| **Atlas strips + manifest.json** | sprite sheet frame-based (Godot AnimatedSprite2D, Unity, Defold, Phaser) — stesso schema `frame_layout` di sprite-gen | ❌ da fare (baker) |
+| **Atlas strips + manifest.json** | sprite sheet frame-based (Godot AnimatedSprite2D, Unity, Defold, Phaser) — stesso schema `frame_layout` di sprite-gen | ✅ fatto (baker `ui/ui/export/atlas.py` + dialogo Anim) |
 | **Godot .tscn/.tres** | Skeleton2D + AnimationPlayer con keyframe; o AnimatedSprite2D+SpriteFrames | ❌ da fare |
 | **Spine 4 JSON** | standard industriale (Spine/DragonBones/engine vari) | ❌ da fare |
 | PNG sequence per stato | pipeline generiche | ❌ da fare (banale, dal baker) |
@@ -173,10 +173,10 @@ Tutto resta **file-based JSON** (stesso spirito di `instances.json` / `manifest.
 
 ## 8. Roadmap implementativa (ordine consigliato)
 
-| Track | Cosa | Valore | Costo |
-|---|---|---|---|
-| **1** | Tagging semantico parti + schema tag standard | abilita tutto il resto | S |
-| **2** | **Cycle generator + atlas baker** (walk/idle/run → strip + manifest) | 💥 deliverable immediato: sprite animati pronti per il gioco senza timeline | M |
+| Track | Cosa | Valore | Costo | Stato |
+|---|---|---|---|---|
+| **1** | Tagging semantico parti + schema tag standard | abilita tutto il resto | S | ✅ |
+| **2** | **Cycle generator + atlas baker** (walk/idle/run → strip + manifest) | 💥 deliverable immediato: sprite animati pronti per il gioco senza timeline | M | ✅ (bottone "Anim" nella TopArea, dialogo con preview/play/export) |
 | **3** | Rigging: auto-skeleton euristico + editor ossa + skinning | abilita animazione scheletrica | M–L |
 | **4** | Timeline editor completo + export Godot/Spine | produzione professionale | L |
 | **5** | Mesh deformation + shape keys (stretchy) | livello Live2D | L |
