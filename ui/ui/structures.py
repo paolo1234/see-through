@@ -89,6 +89,8 @@ class Instance:
         self.bbox = bbox
         self.score = score
         self.idx = idx
+        self.tag = 'unknown'   # Fase 3: tag votato/assegnato
+        self.applied = False   # Fase 3: istanza promossa a drawable
         self._contours = None
 
     def get_cutout(self, src_img: np.ndarray):
@@ -153,7 +155,9 @@ def save_instance_list(instance_list: List[Instance], savep: str, compress=None)
     for instance in instance_list:
         mask_rle = mask2rle(instance.mask)
         dmp_instance_list.append(
-            {'mask_rle': mask_rle, 'score': instance.score, 'bbox': instance.bbox}
+            {'mask_rle': mask_rle, 'score': instance.score, 'bbox': instance.bbox,
+             'idx': instance.idx, 'tag': instance.tag,
+             'applied': instance.applied}
         )
     dict2json(dmp_instance_list, savep, compress=compress)
 
@@ -163,9 +167,11 @@ def load_instance_list(p: str) -> List[Instance]:
     for idx, ins in enumerate(dmp_instance_list):
         instance = Instance(
             mask = maskUtils.decode(ins['mask_rle']) > 0,
-            score = ins['score'],
+            score = ins.get('score', 1.),
             bbox = ins['bbox'],
-            idx=idx,
+            idx = ins.get('idx', idx),
         )
+        instance.tag = ins.get('tag', 'unknown')
+        instance.applied = ins.get('applied', False)
         instance_list.append(instance)
     return instance_list

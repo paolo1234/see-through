@@ -8,7 +8,7 @@ import os
 
 from PIL import Image
 import numpy as np
-from qtpy.QtWidgets import QFileDialog, QMessageBox, QListWidgetItem, QApplication, QListWidget, QMenu, QStackedWidget, QHBoxLayout, QSplitter, QVBoxLayout, QShortcut
+from qtpy.QtWidgets import QFileDialog, QMessageBox, QListWidgetItem, QApplication, QListWidget, QMenu, QStackedWidget, QHBoxLayout, QSplitter, QVBoxLayout, QShortcut, QPushButton, QInputDialog, QWidget
 from qtpy.QtCore import Signal, QSize, Qt, QRectF
 from qtpy.QtGui import QGuiApplication, QContextMenuEvent, QIcon, QCloseEvent, QKeySequence
 import py7zr
@@ -23,7 +23,7 @@ from .tag_tree import TagTree, DrawablePreview
 from .io_thread import ProjSaveThread
 from .message import FrameLessMessageBox, MessageBox
 from .proj import ProjSeg
-from .commands import SetDrawableTagCommand, CommonCommand, AddInstancesCommand
+from .commands import SetDrawableTagCommand, CommonCommand, AddInstancesCommand, CreateDrawablesCommand
 from .top_area import TopArea
 from .widget import Widget
 from .run_thread import SegmentationThread
@@ -119,6 +119,7 @@ class MainWindow(FramelessWindow):
         self.canvas.end_create_rect.connect(self.on_end_create_rect)
         self.run_thread.progress.connect(self.on_run_progress)
         self.candidates_list.itemDoubleClicked.connect(self.on_candidate_activate)
+        self.apply_candidates_btn.clicked.connect(self.apply_candidates)
         
         # self.topArea.show_colormask.connect(self.on_show_colormask)
         self.titleBar.undo_trigger.connect(self.canvas.undo)
@@ -321,13 +322,68 @@ class MainWindow(FramelessWindow):
             return
         idx = item.data(Qt.ItemDataRole.UserRole)
         menu = QMenu()
+        act_apply = menu.addAction(self.tr('Apply as part'))
+        act_tag = menu.addAction(self.tr('Set tag...'))
         act_del = menu.addAction(self.tr('Delete candidate'))
         act_export = menu.addAction(self.tr('Export cutout PNG'))
         act = menu.exec_(self.candidates_list.mapToGlobal(pos))
-        if act == act_del:
+        if act == act_apply:
+            self.apply_candidates()
+        elif act == act_tag:
+            self.on_candidate_tag_dialog(idx)
+        elif act == act_del:
             self.on_candidate_delete(idx)
         elif act == act_export:
             self.export_candidate_cutout(idx)
+
+    def on_candidate_tag_dialog(self, idx):
+        vocab = get_all_segcls(pcfg.cls_path)
+        items = sorted(vocab) if vocab else []
+        items = ['unknown'] + items
+        cur = 'unknown'
+        for i in self.proj.current_instance_list:
+            if i.idx == idx:
+                cur = i.tag or 'unknown'
+                break
+        tag, ok = QInputDialog.getItem(self, self.tr('Set tag'),
+                                       self.tr('Tag parte:'), items, 0, False)
+        if ok and tag:
+            self.retag_candidate(idx, tag)
+
+    def apply_candidates(self):
+        """Voting tag per overlap e promozione a Drawable (undo-able)."""
+        instances = [i for i in self.proj.current_instance_list if not i.applied]
+        if not instances:
+            create_info_dialog('Nessun candidato da applicare (o gia\' applicati).')
+            return
+        if not self.proj.model_valid:
+            create_info_dialog('Apri una pagina con un modello valido per il voting.')
+            return
+        from .assembly import vote_tags
+        from .commands import CreateDrawablesCommand
+        img = self.proj.current_image
+        votes = vote_tags(self.proj.l2dmodel, instances, img,
+                          min_iou=pcfg.assembly_min_iou)
+        tags = [t for _, t, _, _ in votes]
+        self.canvas.push_undo_command(
+            CreateDrawablesCommand(self.proj, instances, tags,
+                                   self.proj.current_model, img))
+        self.canvas.updateCanvas()
+        self.refresh_candidates()
+
+    def retag_candidate(self, idx, tag):
+        from .commands import SetCandidateTagsCommand
+        ins = None
+        for i in self.proj.current_instance_list:
+            if i.idx == idx:
+                ins = i
+                break
+        if ins is None:
+            return
+        self.canvas.push_undo_command(
+            SetCandidateTagsCommand(self.proj, [ins], [tag]))
+        self.refresh_candidates()
+
 
     def export_candidate_cutout(self, idx):
         ins = None
@@ -562,8 +618,10 @@ class MainWindow(FramelessWindow):
         self.candidates_list.clear()
         for ins in self.proj.current_instance_list:
             x, y, w, h = ins.bbox
+            tag = ins.tag if ins.tag else 'unknown'
+            mark = f'\u2713 {tag}' if ins.applied else f'[{tag}]'
             it = QListWidgetItem(
-                f'#{ins.idx}  score {ins.score:.2f}  bbox [{x},{y} {w}x{h}]')
+                f'#{ins.idx}  {mark}  {ins.score:.2f}  [{x},{y} {w}x{h}]')
             it.setData(Qt.ItemDataRole.UserRole, ins.idx)
             self.candidates_list.addItem(it)
         self.candidates_list.blockSignals(False)
@@ -645,13 +703,21 @@ class MainWindow(FramelessWindow):
         self.candidates_list.setMinimumHeight(120)
         self.candidates_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.candidates_list.customContextMenuRequested.connect(self.on_candidates_menu)
+        self.apply_candidates_btn = QPushButton(self.tr('Apply as parts'))
+        self.apply_candidates_btn.setToolTip(
+            self.tr('Vota i tag per overlap e crea le parti editabili (undo-able)'))
+        cand_header = QWidget()
+        cand_lo = QVBoxLayout(cand_header)
+        cand_lo.setContentsMargins(4, 2, 4, 2)
+        cand_lo.addWidget(self.apply_candidates_btn)
+        cand_lo.addWidget(self.candidates_list)
         self.tagtree = TagTree(parent=self)
         self.drawable_preview = DrawablePreview(parent=self)
-        self.rightWidget.addWidget(self.candidates_list)
+        self.rightWidget.addWidget(cand_header)
         self.rightWidget.addWidget(self.tagtree)
         self.rightWidget.addWidget(self.drawable_preview)
         
-        self.rightWidget.setStretchFactor(0, 2)
+        self.rightWidget.setStretchFactor(0, 3)
         self.rightWidget.setStretchFactor(1, 7)
         self.rightWidget.setStretchFactor(2, 1)
         # rightLayout = QVBoxLayout(self.rightWidget)

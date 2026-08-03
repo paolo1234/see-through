@@ -47,6 +47,7 @@ class ProgramConfig(Config):
 
     inference_provider: str = 'dummy'   # dummy | sam | cartoonseg
     show_candidates_panel: bool = True  # pannello istanze candidato a destra
+    assembly_min_iou: float = 0.15      # Fase 3: soglia IoU voting tag
 
     seg_type = 'body_part_tag'
 

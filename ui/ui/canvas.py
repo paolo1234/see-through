@@ -594,7 +594,8 @@ class Canvas(QGraphicsScene):
             self.scaleImage(1)
 
         for ins in self.proj.l2dmodel.valid_drawables():
-            visible = self.get_tagitem(ins.tag).isVisible()
+            ti = self.get_tagitem(ins.tag)
+            visible = ti.isVisible() if ti is not None else True
             item = DrawableItem(ins, canvas=self)
             item.selection_changed = self.drawable_selection_changed
             item.setZValue(0)

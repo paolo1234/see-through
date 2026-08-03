@@ -137,6 +137,7 @@ class ProjSeg:
 
             self.is_current_page_valid = metadata.get('is_valid', False)
             self.is_incomplete = metadata.get('is_incomplete', False)
+            self.rebuild_applied_drawables()
 
         else:
             self.current_model = None
@@ -146,6 +147,30 @@ class ProjSeg:
         self._cur_image = None
         self._cur_instances = None
         self._instance_path_cache = {}
+
+    def rebuild_applied_drawables(self):
+        """Ricostruisce i Drawable dalle istanze applicate (persistite).
+        Chiamato dopo il build del modello di pagina: rende le parti
+        create via assembly disponibili a ogni cambio pagina/sessione."""
+        if not self.model_valid:
+            return
+        img = self.current_image
+        if img is None:
+            return
+        from .assembly import make_drawable
+        existing = {d.did for d in self.l2dmodel.drawables}
+        for ins in self.current_instance_list:
+            if not ins.applied or not ins.tag:
+                continue
+            did = f'inst://{self.current_model}/{ins.idx}'
+            if did in existing:
+                continue
+            d = make_drawable(ins, ins.tag, img, self.current_model)
+            if d is None:
+                continue
+            d.draw_order = len(self.l2dmodel.drawables)
+            d.idx = d.draw_order
+            self.l2dmodel.drawables.append(d)
 
     def current_model_path(self):
         return osp.join(self.directory, self.current_model)
