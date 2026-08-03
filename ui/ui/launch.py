@@ -42,7 +42,7 @@ def main():
     app = QApplication(app_args)
     app.setApplicationName('Live2D Parsing')
 
-    from ui.ui.misc import apply_theme_palette
+    from ui.misc import apply_theme_palette
     apply_theme_palette(app, dark=config.darkmode)
 
     ps = QGuiApplication.primaryScreen()
