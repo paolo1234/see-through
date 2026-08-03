@@ -7,6 +7,7 @@ from qtpy.QtCore import Qt, QItemSelectionModel, QItemSelection, QSize, Signal, 
 from qtpy.QtGui import QFont, QTextCursor, QStandardItemModel, QStandardItem, QAbstractTextDocumentLayout, QColor, QPalette, QTextDocument, QTextCharFormat, QContextMenuEvent, QPixmap, QIcon, QPainter, QMouseEvent, QKeySequence, QShortcut
 
 from .ui_config import pcfg
+from .logger import logger as LOGGER
 from .proj import ProjSeg
 from . import shared
 from .misc import ndarray2pixmap
@@ -366,9 +367,16 @@ class TagTree(QTreeView):
     def update_seleciton(self, did, selected, block_signal=True):
         if block_signal:
             self._block_selection_signal = True
+        elem = self.did2elem.get(did)
+        if elem is None:
+            # albero non ancora sincronizzato (es. parti appena applicate)
+            LOGGER.debug('tag_tree: did %s non presente nella tree', did)
+            if block_signal:
+                self._block_selection_signal = False
+            return
         sel_model = self.selectionModel()
         flag = QItemSelectionModel.SelectionFlag.Select if selected else QItemSelectionModel.SelectionFlag.Deselect
-        sel_model.select(self.did2elem[did].index(), flag)
+        sel_model.select(elem.index(), flag)
         if block_signal:
             self._block_selection_signal = False
 

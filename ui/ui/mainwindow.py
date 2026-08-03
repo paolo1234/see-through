@@ -356,10 +356,18 @@ class MainWindow(FramelessWindow):
         self.canvas.set_candidates_overlay(show)
 
     def _refresh_after_assembly(self):
-        """Aggiorna modello/canvas/lista dopo comandi che toccano le istanze."""
+        """Aggiorna modello/canvas/lista/tagtree dopo comandi che toccano le istanze."""
         self.proj.rebuild_applied_drawables()
         self.canvas.refreshDrawableItems()
         self.refresh_candidates()
+        self._refresh_tagtree()
+
+    def _refresh_tagtree(self):
+        """Risincronizza la tag tree con le drawables correnti (dopo Apply/Edit/Split/Merge)."""
+        if not self.proj.model_valid:
+            return
+        dids, tag_list = self.proj.get_did_tag_pairs(pcfg.seg_type)
+        self.tagtree.update_drawable_lst(dids, tag_list)
 
     def _find_instance(self, idx):
         for i in self.proj.current_instance_list:
@@ -453,6 +461,7 @@ class MainWindow(FramelessWindow):
                                    self.proj.current_model, img))
         self.canvas.updateCanvas()
         self.refresh_candidates()
+        self._refresh_tagtree()
 
     def retag_candidate(self, idx, tag):
         from .commands import SetCandidateTagsCommand
@@ -740,8 +749,16 @@ class MainWindow(FramelessWindow):
 
     def on_candidate_delete(self, idx):
         cur = self.proj.current_instance_list
+        removed = [i for i in cur if i.idx == idx]
         self.proj._cur_instances = [i for i in cur if i.idx != idx]
         self.proj.save_current_instances()
+        if removed and removed[0].applied and self.proj.model_valid:
+            # la drawable applicata va rimossa insieme all'istanza
+            did = f'inst://{self.proj.current_model}/{idx}'
+            self.proj.l2dmodel.drawables = [
+                d for d in self.proj.l2dmodel.drawables if d.did != did]
+            self.canvas.refreshDrawableItems()
+            self._refresh_tagtree()
         self.canvas.setProjSaveState(True)
         self.refresh_candidates()
 
