@@ -291,6 +291,43 @@ class ProjSeg:
         self.l2dmodel.save_tag_parsing(pcfg.seg_type, pcfg.parsing_src, metadata=metadata)
         LOGGER.debug(f'saved page {self.current_model} - {pcfg.parsing_src}')
 
+    # ---------- persistenza animazione (anim.json per pagina) ----------
+    def anim_path(self) -> str:
+        """Percorso <pagina>/anim.json (parametri cycle animation per stato)."""
+        if self.current_model is None:
+            return osp.join(self.directory, 'anim.json')
+        return osp.join(self.directory, self.current_model, 'anim.json')
+
+    def save_anim(self, params_by_kind: dict):
+        """Salva i CycleParams (dict kind -> dict) della pagina corrente."""
+        p = self.anim_path()
+        try:
+            d = os.path.dirname(p)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump({'version': 1, 'states': params_by_kind or {}},
+                          f, ensure_ascii=False, indent=1)
+        except Exception as e:  # noqa: BLE001
+            LOGGER.warning(f'save_anim: {e}')
+
+    def load_anim(self) -> dict:
+        """Ritorna dict kind -> dict params ({} se assente/corrotto; mai crash)."""
+        p = self.anim_path()
+        if not osp.exists(p):
+            return {}
+        try:
+            with open(p, encoding='utf-8') as f:
+                data = json.load(f)
+            states = data.get('states') or {}
+            if not isinstance(states, dict):
+                return {}
+            return {k: v for k, v in states.items()
+                    if isinstance(v, dict) and k in ('idle', 'walk', 'run')}
+        except Exception as e:  # noqa: BLE001
+            LOGGER.warning(f'load_anim: {e}')
+            return {}
+
 
     def set_current_page_byidx(self, idx: int):
         num_pages = self.num_pages

@@ -42,9 +42,21 @@ class AnimationDialog(QDialog):
         self._cycles = {}
         self._current = 0
         self._playing = False
+        self._busy = False
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._next_frame)
-        self._last_params = {}  # parametri effettivi per stato (usati dall'export)
+        # debounce: una sola rigenerazione dopo la pausa (slider/spin drag)
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(250)
+        self._debounce.timeout.connect(self._generate)
+        # parametri salvati per stato (anim.json della pagina): ricaricati
+        # all'apertura e riscritti a chiusura/"Salva animazione"
+        self._saved_params = {}
+        if getattr(proj, 'model_valid', False):
+            self._saved_params = proj.load_anim()
+        self._last_params = {k: CycleParams.from_dict(v)
+                             for k, v in self._saved_params.items()}
         self.setWindowTitle('Cycle Animation (idle / walk / run)')
         self.setMinimumSize(560, 620)
         self._build_ui()
@@ -146,11 +158,29 @@ class AnimationDialog(QDialog):
         self.stop_btn = QPushButton(self.tr('⏹ Stop'), self)
         self.stop_btn.clicked.connect(self._stop)
         btns.addWidget(self.stop_btn)
+        self.save_btn = QPushButton(self.tr('Salva animazione'), self)
+        self.save_btn.setToolTip('Persiste i parametri per stato in anim.json ')
+        self.save_btn.clicked.connect(self._save_anim)
+        btns.addWidget(self.save_btn)
         self.export_btn = QPushButton(self.tr('Esporta atlas…'), self)
         self.export_btn.clicked.connect(self._export)
         btns.addWidget(self.export_btn)
         btns.addStretch(1)
         lay.addLayout(btns)
+
+        # riga export aggiuntiva: layers PNG / PSD
+        lay2 = QHBoxLayout()
+        self.layers_png_btn = QPushButton(self.tr('Esporta layers PNG…'), self)
+        self.layers_png_btn.clicked.connect(self._export_layers_png)
+        lay2.addWidget(self.layers_png_btn)
+        self.layers_psd_btn = QPushButton(self.tr('Esporta PSD…'), self)
+        self.layers_psd_btn.clicked.connect(self._export_layers_psd)
+        lay2.addWidget(self.layers_psd_btn)
+        self.seq_btn = QPushButton(self.tr('Sequenze PNG…'), self)
+        self.seq_btn.clicked.connect(self._export_sequences)
+        lay2.addWidget(self.seq_btn)
+        lay2.addStretch(1)
+        lay.addLayout(lay2)
 
         self._apply_defaults('walk')
 
@@ -208,7 +238,8 @@ class AnimationDialog(QDialog):
         return p
 
     def _apply_defaults(self, kind):
-        p = CycleParams.defaults(kind)
+        # usa i parametri salvati/persistiti se presenti, altrimenti i default
+        p = self._last_params.get(kind) or CycleParams.defaults(kind)
         self._busy = True
         try:
             self.duration_spin.setValue(p.duration_s)
@@ -318,7 +349,93 @@ class AnimationDialog(QDialog):
             return
         self._debounce.start()  # rigenera una sola volta dopo la pausa
 
+    # ---------------- persistenza ----------------
+    def _save_anim(self):
+        """Serializza i parametri effettivi dei 3 stati in anim.json."""
+        if not getattr(self.proj, 'model_valid', False):
+            create_info_dialog('Progetto non aperto: impossibile salvare.')
+            return
+        out = {}
+        for kind in STATES:
+            p = self._last_params.get(kind) or CycleParams.defaults(kind)
+            out[kind] = p.to_dict()
+        self.proj.save_anim(out)
+        self._saved_params = out
+        create_info_dialog(
+            f'Animazione salvata in:\n{self.proj.anim_path()}\n\n'
+            f'Parametri per stato ({len(out)}): durata, frame, swing gambe/'
+            'braccia, bob, lean. Saranno ricaricati alla prossima apertura.')
+
+    def closeEvent(self, event):
+        # salvataggio automatico (silenzioso) dei parametri al termine
+        if self._last_params and getattr(self.proj, 'model_valid', False):
+            try:
+                out = {k: (self._last_params.get(k) or CycleParams.defaults(k)).to_dict()
+                       for k in STATES}
+                self.proj.save_anim(out)
+            except Exception as e:  # noqa: BLE001
+                LOGGER.warning(f'anim persist: {e}')
+        super().closeEvent(event)
+
     # ---------------- export ----------------
+    def _export_layers_png(self):
+        from .export.layers import export_layers_png, collect_parts
+        parts = collect_parts(self.proj)
+        if not parts:
+            return
+        out_dir = QFileDialog.getExistingDirectory(
+            self, self.tr('Esporta layers PNG…'),
+            self.proj.instance_dir() if hasattr(self.proj, 'instance_dir') else '')
+        if not out_dir:
+            return
+        files = export_layers_png(self.proj, parts, out_dir)
+        create_info_dialog(
+            f'Esportati {len(files)} file in:\n{out_dir}\n\n'
+            'background.png = pagina originale\n'
+            'preview.png = composita parti+sfondo\n'
+            '<NN>_<tag>_<did>.png = singola parte (alpha).')
+
+    def _export_layers_psd(self):
+        from .export.layers import export_layers_psd, collect_parts
+        parts = collect_parts(self.proj)
+        if not parts:
+            return
+        default = os.path.join(
+            self.proj.instance_dir() if hasattr(self.proj, 'instance_dir') else '',
+            f'{self.proj.current_model or "layers"}.psd')
+        path, _ = QFileDialog.getSaveFileName(
+            self, self.tr('Esporta PSD…'), default, 'Photoshop (*.psd)')
+        if not path:
+            return
+        if not path.lower().endswith('.psd'):
+            path += '.psd'
+        n = export_layers_psd(self.proj, parts, path)
+        create_info_dialog(f'PSD con {n} layer salvato in:\n{path}')
+
+    def _export_sequences(self):
+        """PNG sequence per stato (idle/walk/run) dai parametri correnti."""
+        if not self._parts:
+            create_info_dialog('Nessuna parte da esportare.')
+            return
+        out_dir = QFileDialog.getExistingDirectory(
+            self, self.tr('Esporta sequenze PNG…'),
+            self.proj.instance_dir() if hasattr(self.proj, 'instance_dir') else '')
+        if not out_dir:
+            return
+        from .export.atlas import scale_parts
+        from .export.sequences import export_sequences
+        H, W = self.proj.current_image.shape[:2]
+        res_txt = self.res_combo.currentText()
+        scale = float(res_txt.rstrip('%')) / 100.0
+        parts = scale_parts(self._parts, scale)
+        size = (max(1, int(round(W * scale))), max(1, int(round(H * scale))))
+        cycles = {}
+        for kind in STATES:
+            p = self._last_params.get(kind) or CycleParams.defaults(kind)
+            cycles[kind] = generate_cycle(parts, p)
+        n = len(export_sequences(parts, cycles, size, out_dir))
+        create_info_dialog(f'Esportate {n} sequenze in:\n{out_dir}')
+
     def _export(self):
         if not self._parts:
             create_info_dialog('Nessuna parte da esportare.')

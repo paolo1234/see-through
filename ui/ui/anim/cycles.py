@@ -62,6 +62,25 @@ class CycleParams:
             p.lean = 14.0
         return p
 
+    # ---------- serializzazione (persistenza nel progetto) ----------
+    FIELDS = ('kind', 'duration_s', 'frames', 'leg_swing', 'arm_swing',
+              'bob', 'lean', 'breath', 'head_nod')
+
+    def to_dict(self) -> dict:
+        return {f: getattr(self, f) for f in self.FIELDS}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'CycleParams':
+        data = data or {}
+        kind = str(data.get('kind', 'walk'))
+        if kind not in ('idle', 'walk', 'run'):
+            kind = 'walk'
+        p = cls.defaults(kind)  # base per il kind; i campi presenti sovrascrivono
+        for f in cls.FIELDS:
+            if f in data and isinstance(data[f], (int, float)):
+                setattr(p, f, data[f])
+        return p
+
 
 def _phase(t: float, T: float) -> float:
     return 2.0 * math.pi * t / max(1e-6, T)

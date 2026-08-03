@@ -1065,7 +1065,13 @@ class MainWindow(FramelessWindow):
         sc_save.activated.connect(self.conditional_manual_save)
         sc_selall = QShortcut(QKeySequence.StandardKey.SelectAll, self)
         sc_selall.activated.connect(self.canvas.selectAll)
+        sc_help = QShortcut(QKeySequence('F1'), self)
+        sc_help.activated.connect(self.on_help)
         self._clipboard = []
+
+    def on_help(self):
+        from .help_dialog import show_help
+        show_help(self)
 
     def shortcutBoxTool(self):
         self.topArea.box_tool_check.setChecked(not self.topArea.box_tool_check.isChecked())

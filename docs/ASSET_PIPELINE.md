@@ -127,6 +127,8 @@ Generatore **parametrico** di cycle animation senza bisogno di animare a mano:
 | Formato | Uso | Stato |
 |---|---|---|
 | **Atlas strips + manifest.json** | sprite sheet frame-based (Godot AnimatedSprite2D, Unity, Defold, Phaser) — stesso schema `frame_layout` di sprite-gen | ✅ fatto (baker `ui/ui/export/atlas.py` + dialogo Anim) |
+| **Layered PNG per parte** | `background.png` + `preview.png` + `NN_tag_did.png` (alpha) — base per rigging in qualsiasi engine | ✅ fatto (`ui/ui/export/layers.py`, bottoni nel dialogo Anim) |
+| **PSD con un layer per parte** | Photoshop/Clip Studio/After Effects (layer RGBA + offset pagina) | ✅ fatto (psd-tools, `export_layers_psd`) |
 | **Godot .tscn/.tres** | Skeleton2D + AnimationPlayer con keyframe; o AnimatedSprite2D+SpriteFrames | ❌ da fare |
 | **Spine 4 JSON** | standard industriale (Spine/DragonBones/engine vari) | ❌ da fare |
 | PNG sequence per stato | pipeline generiche | ❌ da fare (banale, dal baker) |
@@ -156,18 +158,22 @@ ui/ui/
 │   ├── timeline.py       # widget timeline (playhead, track, keyframe)
 │   ├── clips.py          # Clip/Track/Keyframe dataclasses + interpolazione (bezier)
 │   ├── sampler.py        # valuta clip a tempo t → pose (dict osso→transform)
-│   ├── cycles.py         # walk/idle/run parametrici (sine + IK 2-bone)
-│   └── preview.py        # render pose su canvas (usa il scene graph esistente)
+│   ├── cycles.py         # walk/idle/run parametrici (sine + IK 2-bone) + serializzazione CycleParams
+│   └── preview.py        # render pose su canvas (warp deterministico via cv2.remap)
 ├── export/
 │   ├── atlas.py          # bake pose→frames→strip + manifest frame_layout (formato sprite-gen)
+│   ├── layers.py         # layered PNG per parte + PSD (psd-tools) — Fase 9
 │   ├── godot.py          # .tscn/.tres (Skeleton2D+AnimationPlayer | AnimatedSprite2D)
 │   ├── spine.py          # Spine 4 JSON (bones/slots/skins/animations)
 │   └── sequences.py      # PNG sequence per stato
+├── settings_dialog.py    # provider/device + parametri SAM batch (persistiti in ui_config)
+├── help_dialog.py        # F1: scorciatoie + guida flusso
 └── mainwindow.py         # + pannelli Rig / Timeline / Export
 ```
 
 Tutto resta **file-based JSON** (stesso spirito di `instances.json` / `manifest.json`):
-`rig.json`, `clips.json`, `frames.json` — versionabili, leggibili da Colab/Gradio.
+`rig.json`, `clips.json`, `frames.json`, `anim.json` (parametri cycle per stato,
+salvati/ricaricati dal dialogo Anim) — versionabili, leggibili da Colab/Gradio.
 
 ---
 
@@ -176,13 +182,13 @@ Tutto resta **file-based JSON** (stesso spirito di `instances.json` / `manifest.
 | Track | Cosa | Valore | Costo | Stato |
 |---|---|---|---|---|
 | **1** | Tagging semantico parti + schema tag standard | abilita tutto il resto | S | ✅ |
-| **2** | **Cycle generator + atlas baker** (walk/idle/run → strip + manifest) | 💥 deliverable immediato: sprite animati pronti per il gioco senza timeline | M | ✅ (bottone "Anim" nella TopArea, dialogo con preview/play/export) |
-| **3** | Rigging: auto-skeleton euristico + editor ossa + skinning | abilita animazione scheletrica | M–L |
-| **4** | Timeline editor completo + export Godot/Spine | produzione professionale | L |
-| **5** | Mesh deformation + shape keys (stretchy) | livello Live2D | L |
-| **6** | DWPose onnx (auto-skeleton di qualità) | migliora rigging automatico | M |
-| **7** | Inpaint parti su Colab (layerdiff) + sync UI | parti veramente complete (occlusioni) | M (GPU) |
+| **2** | **Cycle generator + atlas baker** (walk/idle/run → strip + manifest) | 💥 deliverable immediato: sprite animati pronti per il gioco senza timeline | M | ✅ (bottone "Anim" nella TopArea; dialog con preview/play/export, risoluzione 25–100%, persistenza parametri in `anim.json`, export layers PNG/PSD) |
+| **8** | **Completezza UI desktop (Fase 8–9)**: layer ops undo-able, canvas interattivo, clipboard/shortcut, Settings (SAM batch), help F1, did2drawable sync, warp deterministico, fix crash | robustezza quotidiana | M | ✅ |
+| **3** | Rigging: auto-skeleton euristico + editor ossa + skinning | abilita animazione scheletrica | M–L | |
+| **4** | Timeline editor completo + export Godot/Spine | produzione professionale | L | |
+| **5** | Mesh deformation + shape keys (stretchy) | livello Live2D | L | |
+| **6** | DWPose onnx (auto-skeleton di qualità) | migliora rigging automatico | M | |
+| **7** | Inpaint parti su Colab (layerdiff) + sync UI | parti veramente complete (occlusioni) | M (GPU) | |
 
-**Prossimo passo consigliato: Track 2** (cycle generator + baker) — massimo valore col
-minimo codice: sfrutta parti/maschere già esistenti, produce sprite sheet giocabili in
-un'ora, e il manifest è già compatibile con `sprite-gen`.
+**Prossimo passo consigliato: Track 3** (rigging: auto-skeleton euristico da tag/bbox +
+editor ossa) — abilita l'animazione scheletrica e l'export Godot/Spine.
