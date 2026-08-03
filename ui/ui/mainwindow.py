@@ -1,5 +1,6 @@
 import sys
 import subprocess
+import json
 from pathlib import Path
 import os.path as osp
 import traceback
@@ -117,6 +118,7 @@ class MainWindow(FramelessWindow):
         self.topArea.prompt_tool.connect(self.on_prompt_tool)
         self.canvas.point_prompted.connect(self.on_point_prompted)
         self.canvas.end_create_rect.connect(self.on_end_create_rect)
+        self.canvas.export_cutout.connect(self.export_cutout)
         self.run_thread.progress.connect(self.on_run_progress)
         self.candidates_list.itemDoubleClicked.connect(self.on_candidate_activate)
         self.apply_candidates_btn.clicked.connect(self.apply_candidates)
@@ -327,6 +329,7 @@ class MainWindow(FramelessWindow):
         act_tag = menu.addAction(self.tr('Set tag...'))
         act_edit = menu.addAction(self.tr('Edit mask...'))
         act_split = menu.addAction(self.tr('Split into parts'))
+        act_layered = menu.addAction(self.tr('Export layered parts...'))
         act_del = menu.addAction(self.tr('Delete candidate'))
         act_export = menu.addAction(self.tr('Export cutout PNG'))
         act = menu.exec_(self.candidates_list.mapToGlobal(pos))
@@ -338,6 +341,8 @@ class MainWindow(FramelessWindow):
             self.on_edit_mask(idx)
         elif act == act_split:
             self.on_split_instance(idx)
+        elif act == act_layered:
+            self.export_layered()
         elif act == act_del:
             self.on_candidate_delete(idx)
         elif act == act_export:
@@ -1028,48 +1033,103 @@ class MainWindow(FramelessWindow):
         save_config()
 
     def export_cutout(self, export_mask=False):
-        create_info_dialog('not implement yet!')
-        return
+        """Esporta i cutout dei drawable selezionati (PNG full-canvas con alpha)."""
         if not self.proj.model_valid:
+            create_info_dialog('Apri un modello con parti da esportare.')
             return
-
+        items = self.canvas.selected_drawable_items()
+        if not items:
+            create_info_dialog('Seleziona almeno una parte sul canvas (click).')
+            return
         d = self.proj.instance_dir()
-        for ii, item in enumerate(self.canvas.selected_drawable_items()):
+        H, W = self.proj.current_image.shape[:2]
+        for item in items:
+            dr = item.drawable
+            tag = dr.tag or 'unknown'
             if export_mask:
-                cutout = item.instance.mask
+                crop = np.asarray(dr.visible_mask, dtype=np.uint8) * 255
+                full = np.zeros((H, W), dtype=np.uint8)
             else:
-                cutout = item.instance.get_cutout(self.proj.img_array)
-            if cutout is not None:
-                savep = QFileDialog.getSaveFileName(self, self.tr("Save Cutout..."), d, "PNG (*.png)")
-                if not isinstance(savep, str):
-                    savep = savep[0]
-                if savep == '':
-                    return
-                suffix = Path(savep).suffix
-                if suffix != '.png':
-                    if suffix == '':
-                        savep = savep + '.png'
-                    else:
-                        savep = savep.replace(suffix, '.png')
-                h, w, _ = self.proj.img_array.shape
-                x, y, _, _ = item.instance.bbox
-                x2 = x + cutout.shape[1]
-                y2 = y + cutout.shape[0]
-                x = np.clip(x, 0, w - 1)
-                x2 = np.clip(x2, 0, w)
-                y = np.clip(y, 0, h - 1)
-                y2 = np.clip(y2, 0, h)
-
+                crop = np.asarray(dr.get_img(), dtype=np.uint8)
+                full = np.zeros((H, W, 4), dtype=np.uint8)
+            ch, cw = crop.shape[:2]
+            x, y = int(dr.x), int(dr.y)
+            x2, y2 = min(x + cw, W), min(y + ch, H)
+            if x2 > x and y2 > y:
                 if export_mask:
-                    canvas = np.zeros((h, w), np.uint8)
-                    if x2 > x and y2 > y:
-                        canvas[y: y2, x: x2] = cutout.astype(np.uint8) * 255
+                    full[y:y2, x:x2] = crop[:y2 - y, :x2 - x]
                 else:
-                    canvas = np.concatenate([self.proj.img_array, np.zeros((h, w, 1), dtype=np.uint8)], axis=2)
-                    if x2 > x and y2 > y:
-                        canvas[y: y2, x: x2, 3] = item.instance.mask.astype(np.uint8) * 255
-                    
-                Image.fromarray(canvas).save(savep)
+                    full[y:y2, x:x2] = crop[:y2 - y, :x2 - x]
+            savep = QFileDialog.getSaveFileName(
+                self, self.tr('Save Cutout...'),
+                osp.join(d, f'{tag}__{Path(dr.did or str(dr.idx)).name}.png'),
+                'PNG (*.png)')
+            if isinstance(savep, tuple):
+                savep = savep[0]
+            if not savep:
+                continue
+            if not savep.lower().endswith('.png'):
+                savep += '.png'
+            Image.fromarray(full).save(savep)
+        create_info_dialog('Cutout esportati.')
+
+    def export_layered(self):
+        """Esporta tutte le parti (originali + applicate) come PNG separati
+        + manifest.json + composite.png, per l'uso a valle (atlas/training)."""
+        if not self.proj.model_valid:
+            create_info_dialog('Apri un modello con parti da esportare.')
+            return
+        out_dir = QFileDialog.getExistingDirectory(
+            self, self.tr('Export layered parts...'),
+            self.proj.instance_dir())
+        if not out_dir:
+            return
+        os.makedirs(out_dir, exist_ok=True)
+        H, W = self.proj.current_image.shape[:2]
+        manifest = []
+        for order, dr in enumerate(self.proj.l2dmodel.valid_drawables()):
+            tag = dr.tag or 'unknown'
+            fname = f'{order:03d}__{tag}.png'
+            try:
+                crop = np.asarray(dr.get_img(), dtype=np.uint8)
+            except Exception as e:  # noqa: BLE001
+                LOGGER.warning(f'export layered: skip {dr.did}: {e}')
+                continue
+            full = np.zeros((H, W, 4), dtype=np.uint8)
+            ch, cw = crop.shape[:2]
+            x, y = int(dr.x), int(dr.y)
+            x2, y2 = min(x + cw, W), min(y + ch, H)
+            if x2 > x and y2 > y:
+                full[y:y2, x:x2] = crop[:y2 - y, :x2 - x]
+            Image.fromarray(full).save(osp.join(out_dir, fname))
+            manifest.append({
+                'file': fname, 'did': dr.did, 'tag': tag,
+                'idx': dr.idx, 'draw_order': order,
+                'bbox': [x, y, cw, ch],
+                'area': int(np.count_nonzero(full[..., 3]))
+            })
+        # composita: parti applicate sopra le originali, in draw_order
+        comp = np.zeros((H, W, 4), dtype=np.uint8)
+        for dr in self.proj.l2dmodel.valid_drawables():
+            try:
+                crop = np.asarray(dr.get_img(), dtype=np.uint8)
+            except Exception:  # noqa: BLE001
+                continue
+            ch, cw = crop.shape[:2]
+            x, y = int(dr.x), int(dr.y)
+            x2, y2 = min(x + cw, W), min(y + ch, H)
+            if x2 > x and y2 > y:
+                roi = crop[:y2 - y, :x2 - x]
+                a = roi[..., 3:4].astype(np.float32) / 255.0
+                dst = comp[y:y2, x:x2]
+                dst[..., :3] = (roi[..., :3] * a + dst[..., :3] * (1 - a)).astype(np.uint8)
+                dst[..., 3] = np.maximum(dst[..., 3], roi[..., 3])
+        Image.fromarray(comp).save(osp.join(out_dir, 'composite.png'))
+        with open(osp.join(out_dir, 'manifest.json'), 'w', encoding='utf-8') as f:
+            json.dump({'image': f'{self.proj.current_model}', 'parts': manifest,
+                       'size': [W, H]}, f, indent=2, ensure_ascii=False)
+        create_info_dialog(f'Export layered completato: {out_dir}\n'
+                           f'{len(manifest)} parti + manifest.json + composite.png')
 
     def on_create_errdialog(self, error_msg: str, detail_traceback: str = '', exception_type: str = ''):
         try:
