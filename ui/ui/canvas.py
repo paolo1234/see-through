@@ -353,7 +353,12 @@ class Canvas(QGraphicsScene):
     def updateLayers(self):
         if not self.proj.model_valid:
             return
-        self.base_pixmap = ndarray2pixmap(np.zeros_like(self.proj.l2dmodel.final))
+        img = self.proj.current_image
+        if img is None:
+            img = np.zeros_like(self.proj.l2dmodel.final)
+        # base = immagine della pagina (non piu' zeros): senza drawable originali
+        # il personaggio e' comunque visibile; le parti (pixel reali) stanno sopra
+        self.base_pixmap = ndarray2pixmap(img)
         self.imgLayer.setPixmap(self.base_pixmap)
 
     def adjustScrollBar(self, scrollBar: QScrollBar, factor: float):
