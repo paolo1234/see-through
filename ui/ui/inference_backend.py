@@ -9,6 +9,7 @@
 # Ogni provider produce list[Instance] (vedi ui/ui/structures.py: mask, bbox=[x,y,w,h]).
 import importlib
 import numpy as np
+import torch
 from typing import List, Optional, Tuple
 
 from .structures import Instance
@@ -94,11 +95,19 @@ class SAMProvider(InferenceProvider):
         size = self.kwargs.get('model_size', 'small')
         self.weight_id = self.SIZES.get(size, 'sam2.1_hiera_small')
         sam = SAM()
-        sam.build_model(self.weight_id, device=self.kwargs.get('device', 'cpu'))
+        device = self.kwargs.get('device', 'cpu')
+        if device == 'cuda' and not torch.cuda.is_available():
+            device = 'cpu'
+        sam.build_model(self.weight_id, device=device)
         return sam
 
     def infer_img(self, img, boxes=None, points=None, labels=None):
-        pred_masks, scores, _ = self._model.predict(img, np.array(points if points is not None else boxes))
+        if points is not None and len(points):
+            pred_masks, scores, _ = self._model.predict(
+                img, points=points, labels=labels)
+        else:
+            pred_masks, scores, _ = self._model.predict(
+                img, np.array(boxes if boxes is not None else []))
         instances = []
         for m, s in zip(pred_masks, scores):
             m = np.array(m, dtype=bool)

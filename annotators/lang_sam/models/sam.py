@@ -1,6 +1,7 @@
+import os
 import numpy as np
 import torch
-from hydra import compose
+from hydra import initialize, compose
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
@@ -32,10 +33,23 @@ class SAM:
     def build_model(self, sam_type: str, ckpt_path: str | None = None, device=DEVICE):
         self.sam_type = sam_type
         self.ckpt_path = ckpt_path
-        cfg = compose(config_name=SAM_MODELS[self.sam_type]["config"], overrides=[])
+        # hydra 1.3+ risolve config_path rispetto al modulo chiamante:
+        # usiamo initialize_config_dir con path ASSOLUTO del package sam2
+        import sam2 as _sam2_pkg
+        from hydra.core.global_hydra import GlobalHydra
+        from hydra import initialize_config_dir
+        cfg_dir = os.path.join(os.path.dirname(_sam2_pkg.__file__), 'configs')
+        cfg_name = SAM_MODELS[self.sam_type]['config'].replace('configs/', '')
+        cfg_name = cfg_name[:-5] if cfg_name.endswith('.yaml') else cfg_name
+        GlobalHydra.instance().clear()
+        with initialize_config_dir(config_dir=cfg_dir, version_base=None):
+            cfg = compose(config_name=cfg_name, overrides=[])
         OmegaConf.resolve(cfg)
         self.model = instantiate(cfg.model, _recursive_=True)
         self._load_checkpoint(self.model)
+        # fallback CPU se richiesto cuda ma non disponibile
+        if str(device).startswith('cuda') and not torch.cuda.is_available():
+            device = 'cpu'
         self.model = self.model.to(device)
         self.model.eval()
         self.mask_generator = SAM2AutomaticMaskGenerator(self.model)
@@ -75,9 +89,22 @@ class SAM:
         sam2_result = self.mask_generator.generate(image_rgb)
         return sam2_result
 
-    def predict(self, image_rgb: np.ndarray, xyxy: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def predict(self, image_rgb: np.ndarray, xyxy: np.ndarray | None = None,
+                points=None, labels=None,
+                multimask_output: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Prompt box (xyxy) o punti (points+labels) + output mask/scores."""
         self.predictor.set_image(image_rgb)
-        masks, scores, logits = self.predictor.predict(box=xyxy, multimask_output=False)
+        if xyxy is not None and len(xyxy):
+            masks, scores, logits = self.predictor.predict(
+                box=xyxy, multimask_output=multimask_output)
+        elif points is not None and len(points):
+            masks, scores, logits = self.predictor.predict(
+                point_coords=np.asarray(points, dtype=np.float32),
+                point_labels=np.asarray(labels, dtype=np.int64),
+                multimask_output=multimask_output)
+        else:
+            masks, scores, logits = self.predictor.predict(
+                multimask_output=multimask_output)
         if len(masks.shape) > 3:
             masks = np.squeeze(masks, axis=1)
         return masks, scores, logits

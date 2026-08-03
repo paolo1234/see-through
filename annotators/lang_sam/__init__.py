@@ -1,7 +1,13 @@
 import numpy as np
 from PIL import Image
 
-from .models.gdino import GDINO
+# GDINO richiede transformers (pesante, usato solo per la modalita' text-prompt).
+# Per il solo SAM (box/point) non serve: import opzionale per non bloccare il package.
+try:
+    from .models.gdino import GDINO
+except Exception as e:  # noqa: BLE001
+    GDINO = None
+    print(f'[lang_sam] GDINO non disponibile ({e}); solo SAM box/point attivo')
 from .models.sam import SAM
 from .models.utils import DEVICE
 
