@@ -74,17 +74,27 @@ class DummyProvider(InferenceProvider):
 
 class SAMProvider(InferenceProvider):
     """Segment Anything 2.1 - funziona con torch moderno del nostro venv.
-    Pesi scaricati via huggingface alla prima chiamata (HF_HOME configurabile)."""
+    Pesi scaricati da Meta alla prima chiamata (cache in HF_HOME).
+    Su CPU usare model_size 'small' o 'tiny' (large = minuti per immagine)."""
     name = 'sam'
-    weight_id = 'sam2.1_hiera_large'
+    weight_id = 'sam2.1_hiera_small'
+
+    SIZES = {
+        'tiny': 'sam2.1_hiera_tiny',
+        'small': 'sam2.1_hiera_small',
+        'base+': 'sam2.1_hiera_base_plus',
+        'large': 'sam2.1_hiera_large',
+    }
 
     def supports_box(self):   return True
     def supports_point(self): return True
 
     def _build_model(self):
         from annotators.lang_sam.models.sam import SAM
+        size = self.kwargs.get('model_size', 'small')
+        self.weight_id = self.SIZES.get(size, 'sam2.1_hiera_small')
         sam = SAM()
-        sam.build_model(self.weight_id, device=self.kwargs.get('device', 'cuda'))
+        sam.build_model(self.weight_id, device=self.kwargs.get('device', 'cpu'))
         return sam
 
     def infer_img(self, img, boxes=None, points=None, labels=None):
@@ -140,6 +150,11 @@ def get_provider(name: str, **kwargs) -> InferenceProvider:
     if name == 'dummy':
         provider = DummyProvider(**kwargs)
     elif name == 'sam':
+        try:
+            from .ui_config import pcfg
+            kwargs.setdefault('model_size', getattr(pcfg, 'sam_model_size', 'small'))
+        except Exception:  # noqa: BLE001
+            pass
         provider = SAMProvider(**kwargs)
     elif name == 'cartoonseg':
         provider = CartoonSegProvider(**kwargs)

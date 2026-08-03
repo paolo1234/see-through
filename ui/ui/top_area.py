@@ -144,6 +144,12 @@ class TopArea(Widget):
             self.tr('Engine'), options=AVAILABLE_PROVIDERS, size='small', editable=False)
         self.provider_selector.currentTextChanged.connect(self.on_provider_changed)
 
+        from .inference_backend import SAMProvider
+        self.sam_size_selector, _, samsize_lo = combobox_with_label(
+            self.tr('SAM'), options=list(SAMProvider.SIZES.keys()),
+            size='small', editable=False)
+        self.sam_size_selector.currentTextChanged.connect(self.on_sam_size_changed)
+
         self.box_tool_check = QCheckBox(self.tr('Box'), parent=self)
         self.point_tool_check = QCheckBox(self.tr('Point'), parent=self)
         self.box_tool_check.toggled.connect(self.on_prompt_tool)
@@ -156,6 +162,7 @@ class TopArea(Widget):
         model_layout.addWidget(self.run_btn)
         model_layout.addLayout(cls_list_combobox_lo)
         model_layout.addLayout(provider_lo)
+        model_layout.addLayout(samsize_lo)
         model_layout.addWidget(self.box_tool_check)
         model_layout.addWidget(self.point_tool_check)
         model_layout.addWidget(self.model_stack_widget)
@@ -176,6 +183,12 @@ class TopArea(Widget):
     def on_provider_changed(self, name: str):
         if pcfg.inference_provider != name:
             pcfg.inference_provider = name
+            save_config()
+        self.sam_size_selector.setEnabled(name == 'sam')
+
+    def on_sam_size_changed(self, size: str):
+        if pcfg.sam_model_size != size:
+            pcfg.sam_model_size = size
             save_config()
 
     def on_run_pressed(self):
@@ -216,6 +229,10 @@ class TopArea(Widget):
         self.provider_selector.blockSignals(True)
         self.provider_selector.setCurrentText(config.inference_provider)
         self.provider_selector.blockSignals(False)
+        self.sam_size_selector.blockSignals(True)
+        self.sam_size_selector.setCurrentText(config.sam_model_size)
+        self.sam_size_selector.blockSignals(False)
+        self.sam_size_selector.setEnabled(config.inference_provider == 'sam')
 
     # def block_tag_change_signal(self, block: bool):
     #     self._block_tag_change_signal = block
