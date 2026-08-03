@@ -24,5 +24,4 @@ tqdm
 # SAM 2.1 (provider sam; pesi scaricati in ~/.cache/torch/hub/checkpoints)
 sam2==1.1.0
 
-# SAM 2.1 (provider sam; pesi scaricati in ~/.cache/torch/hub/checkpoints)
-sam2==1.1.0
+
