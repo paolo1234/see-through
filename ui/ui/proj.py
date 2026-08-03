@@ -172,6 +172,34 @@ class ProjSeg:
             d.idx = d.draw_order
             self.l2dmodel.drawables.append(d)
 
+    def _applied_did(self, ins):
+        return f'inst://{self.current_model}/{ins.idx}'
+
+    def invalidate_applied_drawable(self, ins):
+        """Rimuove/ricostruisce il drawable dell'istanza (usato dai comandi mask)."""
+        if not self.model_valid:
+            return
+        did = self._applied_did(ins)
+        self.l2dmodel.drawables = [
+            d for d in self.l2dmodel.drawables if d.did != did]
+        if ins.applied:
+            self.rebuild_applied_drawable(ins)
+
+    def rebuild_applied_drawable(self, ins):
+        """Ricostruisce il singolo drawable di un'istanza applicata."""
+        if not self.model_valid or not ins.applied:
+            return
+        img = self.current_image
+        if img is None:
+            return
+        from .assembly import make_drawable
+        d = make_drawable(ins, ins.tag, img, self.current_model)
+        if d is None:
+            return
+        d.draw_order = len(self.l2dmodel.drawables)
+        d.idx = d.draw_order
+        self.l2dmodel.drawables.append(d)
+
     def current_model_path(self):
         return osp.join(self.directory, self.current_model)
 

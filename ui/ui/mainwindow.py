@@ -8,7 +8,7 @@ import os
 
 from PIL import Image
 import numpy as np
-from qtpy.QtWidgets import QFileDialog, QMessageBox, QListWidgetItem, QApplication, QListWidget, QMenu, QStackedWidget, QHBoxLayout, QSplitter, QVBoxLayout, QShortcut, QPushButton, QInputDialog, QWidget
+from qtpy.QtWidgets import QFileDialog, QMessageBox, QListWidgetItem, QApplication, QListWidget, QMenu, QStackedWidget, QHBoxLayout, QSplitter, QVBoxLayout, QShortcut, QPushButton, QInputDialog, QWidget, QAbstractItemView
 from qtpy.QtCore import Signal, QSize, Qt, QRectF
 from qtpy.QtGui import QGuiApplication, QContextMenuEvent, QIcon, QCloseEvent, QKeySequence
 import py7zr
@@ -23,7 +23,7 @@ from .tag_tree import TagTree, DrawablePreview
 from .io_thread import ProjSaveThread
 from .message import FrameLessMessageBox, MessageBox
 from .proj import ProjSeg
-from .commands import SetDrawableTagCommand, CommonCommand, AddInstancesCommand, CreateDrawablesCommand
+from .commands import SetDrawableTagCommand, CommonCommand, AddInstancesCommand, CreateDrawablesCommand, EditMaskCommand, SplitInstanceCommand, MergeInstancesCommand
 from .top_area import TopArea
 from .widget import Widget
 from .run_thread import SegmentationThread
@@ -120,6 +120,7 @@ class MainWindow(FramelessWindow):
         self.run_thread.progress.connect(self.on_run_progress)
         self.candidates_list.itemDoubleClicked.connect(self.on_candidate_activate)
         self.apply_candidates_btn.clicked.connect(self.apply_candidates)
+        self.merge_sel_btn.clicked.connect(self.on_merge_selected)
         
         # self.topArea.show_colormask.connect(self.on_show_colormask)
         self.titleBar.undo_trigger.connect(self.canvas.undo)
@@ -324,6 +325,8 @@ class MainWindow(FramelessWindow):
         menu = QMenu()
         act_apply = menu.addAction(self.tr('Apply as part'))
         act_tag = menu.addAction(self.tr('Set tag...'))
+        act_edit = menu.addAction(self.tr('Edit mask...'))
+        act_split = menu.addAction(self.tr('Split into parts'))
         act_del = menu.addAction(self.tr('Delete candidate'))
         act_export = menu.addAction(self.tr('Export cutout PNG'))
         act = menu.exec_(self.candidates_list.mapToGlobal(pos))
@@ -331,10 +334,78 @@ class MainWindow(FramelessWindow):
             self.apply_candidates()
         elif act == act_tag:
             self.on_candidate_tag_dialog(idx)
+        elif act == act_edit:
+            self.on_edit_mask(idx)
+        elif act == act_split:
+            self.on_split_instance(idx)
         elif act == act_del:
             self.on_candidate_delete(idx)
         elif act == act_export:
             self.export_candidate_cutout(idx)
+
+    def _refresh_after_assembly(self):
+        """Aggiorna modello/canvas/lista dopo comandi che toccano le istanze."""
+        self.proj.rebuild_applied_drawables()
+        self.canvas.refreshDrawableItems()
+        self.refresh_candidates()
+
+    def _find_instance(self, idx):
+        for i in self.proj.current_instance_list:
+            if i.idx == idx:
+                return i
+        return None
+
+    def on_edit_mask(self, idx):
+        ins = self._find_instance(idx)
+        if ins is None:
+            return
+        img = self.proj.current_image
+        if img is None:
+            create_info_dialog('Immagine di pagina non disponibile.')
+            return
+        from .mask_editor import run_mask_editor
+        ok, results = run_mask_editor(img, ins, self)
+        if not ok or not results:
+            return
+        if len(results) == 1:
+            m, b = results[0]
+            self.canvas.push_undo_command(EditMaskCommand(self.proj, ins, m, b))
+        else:
+            pieces = [m for m, _ in results]
+            self.canvas.push_undo_command(SplitInstanceCommand(self.proj, ins, pieces))
+        self._refresh_after_assembly()
+
+    def on_split_instance(self, idx):
+        ins = self._find_instance(idx)
+        if ins is None:
+            return
+        from .mask_ops import split_components
+        pieces = split_components(ins.mask)
+        if len(pieces) < 2:
+            create_info_dialog('L\'istanza ha una sola componente connessa: niente da dividere.')
+            return
+        self.canvas.push_undo_command(SplitInstanceCommand(self.proj, ins, pieces))
+        self._refresh_after_assembly()
+
+    def on_merge_selected(self):
+        items = self.candidates_list.selectedItems()
+        if len(items) < 2:
+            create_info_dialog('Seleziona almeno 2 candidati (Ctrl+click) e riprova.')
+            return
+        idxs = [it.data(Qt.ItemDataRole.UserRole) for it in items]
+        ins_list = [i for i in self.proj.current_instance_list if i.idx in idxs]
+        img = self.proj.current_image
+        if img is None:
+            return
+        from .mask_ops import merge_masks
+        H, W = img.shape[:2]
+        m, b = merge_masks([i.mask for i in ins_list],
+                           [i.bbox for i in ins_list], H, W)
+        if not m.any():
+            create_info_dialog('Maschere vuote: impossibile fondere.')
+            return
+        self.canvas.push_undo_command(MergeInstancesCommand(self.proj, ins_list, m, b))
+        self._refresh_after_assembly()
 
     def on_candidate_tag_dialog(self, idx):
         vocab = get_all_segcls(pcfg.cls_path)
@@ -701,15 +772,21 @@ class MainWindow(FramelessWindow):
         self.rightWidget = QSplitter(Qt.Orientation.Vertical)
         self.candidates_list = QListWidget()
         self.candidates_list.setMinimumHeight(120)
+        self.candidates_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.candidates_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.candidates_list.customContextMenuRequested.connect(self.on_candidates_menu)
         self.apply_candidates_btn = QPushButton(self.tr('Apply as parts'))
         self.apply_candidates_btn.setToolTip(
             self.tr('Vota i tag per overlap e crea le parti editabili (undo-able)'))
+        self.merge_sel_btn = QPushButton(self.tr('Merge sel.'))
+        self.merge_sel_btn.setToolTip(self.tr('Fonde i candidati selezionati (Ctrl+click)'))
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.apply_candidates_btn)
+        btn_row.addWidget(self.merge_sel_btn)
         cand_header = QWidget()
         cand_lo = QVBoxLayout(cand_header)
         cand_lo.setContentsMargins(4, 2, 4, 2)
-        cand_lo.addWidget(self.apply_candidates_btn)
+        cand_lo.addLayout(btn_row)
         cand_lo.addWidget(self.candidates_list)
         self.tagtree = TagTree(parent=self)
         self.drawable_preview = DrawablePreview(parent=self)

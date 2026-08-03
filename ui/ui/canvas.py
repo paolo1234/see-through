@@ -682,6 +682,22 @@ class Canvas(QGraphicsScene):
         self.did2drawableitem.clear()
         self.block_selection_signal = False
 
+    def refreshDrawableItems(self):
+        """Ricarica gli item drawable dal modello SENZA toccare l'undo stack.
+        Usato dopo apply/edit/split/merge delle istanze candidato."""
+        self.clearDrawableItems()
+        if self.proj is None or not self.proj.model_valid:
+            return
+        for ins in self.proj.l2dmodel.valid_drawables():
+            ti = self.get_tagitem(ins.tag)
+            visible = ti.isVisible() if ti is not None else True
+            item = DrawableItem(ins, canvas=self)
+            item.selection_changed = self.drawable_selection_changed
+            item.setZValue(0)
+            item.setVisible(visible)
+            item.setParentItem(self.baseLayer)
+            self.did2drawableitem[item.drawable.did] = item
+
     def on_undostack_changed(self):
         if self.pushed_undo_step != self.saved_undo_step:
             self.setProjSaveState(True)

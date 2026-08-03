@@ -112,6 +112,109 @@ class SetCandidateTagsCommand(QUndoCommand):
         self.proj.save_current_instances()
 
 
+class EditMaskCommand(QUndoCommand):
+    """Undo-able: sostituisce la maschera di un'istanza (brush/eraser/morfologia)."""
+    def __init__(self, proj, ins, new_mask, new_bbox):
+        super().__init__()
+        self.proj = proj
+        self.ins = ins
+        self.src_mask = ins.mask
+        self.src_bbox = ins.bbox
+        self.tgt_mask = new_mask
+        self.tgt_bbox = new_bbox
+
+    def _apply(self, mask, bbox):
+        self.ins.mask = mask
+        self.ins.bbox = bbox
+        self.ins._contours = None
+        self.proj.invalidate_applied_drawable(self.ins)
+        self.proj.save_current_instances()
+
+    def redo(self):
+        self._apply(self.tgt_mask, self.tgt_bbox)
+
+    def undo(self):
+        self._apply(self.src_mask, self.src_bbox)
+
+
+class SplitInstanceCommand(QUndoCommand):
+    """Undo-able: divide un'istanza nelle sue componenti connesse."""
+    def __init__(self, proj, ins, pieces, min_area=8):
+        super().__init__()
+        self.proj = proj
+        self.ins = ins
+        self.src = (ins.mask, ins.bbox, ins.tag, ins.applied)
+        self.min_area = min_area
+        self.pieces = list(pieces)
+        self.created = []  # nuove istanze (ins, bbox)
+
+    def redo(self):
+        if not self.created:
+            from .mask_ops import bbox_of
+            cur = self.proj.current_instance_list
+            ids = {i.idx for i in cur}
+            nxt = max(ids, default=-1) + 1
+            x, y, _, _ = (int(v) for v in self.ins.bbox)
+            for pc in self.pieces:
+                bx, by, bw, bh = bbox_of(pc)
+                from .structures import Instance
+                new_ins = Instance(mask=pc, bbox=[x + bx, y + by, bw, bh],
+                                   score=self.ins.score, idx=nxt)
+                new_ins.tag = self.ins.tag
+                new_ins.applied = self.ins.applied
+                self.created.append(new_ins)
+                nxt += 1
+        # rimuovi l'originale, aggiungi le parti
+        cur = self.proj.current_instance_list
+        cur[:] = [i for i in cur if i is not self.ins] + self.created
+        self.ins.applied = False
+        self.proj.invalidate_applied_drawable(self.ins)
+        self.proj.save_current_instances()
+
+    def undo(self):
+        cur = self.proj.current_instance_list
+        rm = {i.idx for i in self.created}
+        cur[:] = [i for i in cur if i.idx not in rm] + [self.ins]
+        self.ins.mask, self.ins.bbox, self.ins.tag, self.ins.applied = self.src
+        self.proj.save_current_instances()
+
+
+class MergeInstancesCommand(QUndoCommand):
+    """Undo-able: fonde piu' istanze in una (amalgamated parts)."""
+    def __init__(self, proj, instances, merged_mask, merged_bbox):
+        super().__init__()
+        self.proj = proj
+        self.instances = list(instances)
+        self.merged_mask = merged_mask
+        self.merged_bbox = merged_bbox
+        self.new_ins = None
+
+    def redo(self):
+        from .structures import Instance
+        cur = self.proj.current_instance_list
+        ids = {i.idx for i in cur}
+        nxt = max(ids, default=-1) + 1
+        src = self.instances[0]
+        self.new_ins = Instance(mask=self.merged_mask, bbox=self.merged_bbox,
+                                score=max(i.score for i in self.instances), idx=nxt)
+        self.new_ins.tag = max((i.tag for i in self.instances), key=lambda t: sum(
+            1 for i in self.instances if i.tag == t))
+        rm = {id(i) for i in self.instances}
+        keep = [i for i in cur if id(i) not in rm]
+        cur[:] = keep + [self.new_ins]
+        for i in self.instances:
+            i.applied = False
+            self.proj.invalidate_applied_drawable(i)
+        self.proj.save_current_instances()
+
+    def undo(self):
+        cur = self.proj.current_instance_list
+        cur[:] = [i for i in cur if i is not self.new_ins] + self.instances
+        for i in self.instances:
+            self.proj.rebuild_applied_drawable(i)
+        self.proj.save_current_instances()
+
+
 class CommonCommand(QUndoCommand):
     def __init__(self, redo_kwargs, undo_kwargs, func: Callable):
         super().__init__()
